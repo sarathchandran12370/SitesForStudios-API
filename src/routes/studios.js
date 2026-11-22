@@ -10,6 +10,8 @@ import { SiteConfig, Photo } from '../models/index.js';
 import { storage } from '../services/storage.js';
 import { config } from '../config.js';
 import { parse, tempPassword, hashPassword, HttpError, publicAccount } from '../util.js';
+import { notify, studioBrand } from '../services/notify.js';
+import { inviteMessage, passwordResetMessage } from '../services/messages.js';
 
 const r = Router();
 r.use(requireRole(...STUDIO_MANAGERS));
@@ -194,6 +196,7 @@ r.post('/:id/accounts', async (req, res) => {
       phone: z.string().max(20).optional(),
       role: z.enum(['client', 'staff']).default('client'),
       events: z.array(z.object({ eventId: z.string().uuid(), accessLevel: z.enum(['primary', 'guest']).default('primary') })).default([]),
+      sendInvite: z.boolean().default(true),
     }),
     req.body
   );
@@ -214,7 +217,12 @@ r.post('/:id/accounts', async (req, res) => {
     const ev = await one('SELECT id FROM events WHERE id = $1 AND studio_id = $2', [e.eventId, studio.id]);
     if (ev) await q('INSERT INTO event_access(event_id, account_id, access_level) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [ev.id, acct.id, e.accessLevel]);
   }
-  res.status(201).json({ account: publicAccount(acct), temporaryPassword: password, loginUrl: `${config.appUrl}/login` });
+  let invited = null;
+  if (body.sendInvite) {
+    const msg = inviteMessage({ brand: await studioBrand(studio.id), name: acct.name, email: acct.email, password, role: acct.role });
+    invited = await notify({ orgId: studio.org_id, kind: 'invite', email: { to: acct.email, ...msg.email }, whatsapp: acct.phone ? { to: acct.phone, ...msg.whatsapp } : undefined });
+  }
+  res.status(201).json({ account: publicAccount(acct), temporaryPassword: password, loginUrl: `${config.appUrl}/login`, invited: summarize(invited) });
 });
 
 async function accountGuard(req, res) {
@@ -235,12 +243,18 @@ async function accountGuard(req, res) {
 r.post('/accounts/:accountId/reset-password', async (req, res) => {
   const acct = await accountGuard(req, res);
   if (!acct) return;
+  const { sendInvite } = parse(z.object({ sendInvite: z.boolean().default(true) }), req.body || {});
   const password = tempPassword();
   await q(
     'UPDATE accounts SET password_hash = $2, must_change_password = true, token_version = token_version + 1 WHERE id = $1',
     [acct.id, await hashPassword(password)]
   );
-  res.json({ email: acct.email, temporaryPassword: password });
+  let invited = null;
+  if (sendInvite) {
+    const msg = passwordResetMessage({ brand: await studioBrand(acct.studio_id), name: acct.name, email: acct.email, password });
+    invited = await notify({ orgId: acct.org_id, kind: 'password_reset', email: { to: acct.email, ...msg.email }, whatsapp: acct.phone ? { to: acct.phone, ...msg.whatsapp } : undefined });
+  }
+  res.json({ email: acct.email, temporaryPassword: password, invited: summarize(invited) });
 });
 
 r.put('/accounts/:accountId/events', async (req, res) => {
@@ -282,5 +296,11 @@ r.patch('/enquiries/:enquiryId', async (req, res) => {
   const { status } = parse(z.object({ status: z.enum(['new', 'contacted', 'quoted', 'booked', 'lost']) }), req.body);
   res.json(await one('UPDATE enquiries SET status = $2 WHERE id = $1 RETURNING *', [enq.id, status]));
 });
+
+/** {email:'logged', whatsapp:'skipped'} style summary of a notify() result for the UI. */
+function summarize(r) {
+  if (!r) return null;
+  return { email: r.email?.status || null, whatsapp: r.whatsapp?.status || null };
+}
 
 export default r;

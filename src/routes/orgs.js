@@ -5,6 +5,8 @@ import { q, one, tx } from '../db/pg.js';
 import { requireRole } from '../middleware/auth.js';
 import { SiteConfig } from '../models/index.js';
 import { parse, slugify, tempPassword, hashPassword, HttpError } from '../util.js';
+import { notify } from '../services/notify.js';
+import { inviteMessage } from '../services/messages.js';
 
 const r = Router();
 r.use(requireRole('org_admin', 'super_admin'));
@@ -51,6 +53,7 @@ r.post('/studios', async (req, res) => {
       templateId: z.string().default('editorial'),
       adminName: z.string().min(2).max(120).optional(),
       adminEmail: z.string().email().optional(),
+      sendInvite: z.boolean().default(true),
     }),
     req.body
   );
@@ -84,7 +87,13 @@ r.post('/studios', async (req, res) => {
     templateId: studio.template_id,
     seo: { title: `${studio.name} | Wedding Photography`, description: `${studio.name} captures weddings with a timeless, documentary style.` },
   });
-  res.status(201).json({ studio, admin: body.adminEmail ? { email: body.adminEmail, temporaryPassword: password } : null });
+  let invited = false;
+  if (body.adminEmail && body.sendInvite) {
+    const msg = inviteMessage({ brand: { name: studio.name }, name: body.adminName || body.name, email: body.adminEmail, password, role: 'studio_admin' });
+    const r = await notify({ orgId, kind: 'invite', email: { to: body.adminEmail, ...msg.email } });
+    invited = ['sent', 'logged'].includes(r.email?.status);
+  }
+  res.status(201).json({ studio, admin: body.adminEmail ? { email: body.adminEmail, temporaryPassword: password } : null, invited });
 });
 
 export default r;

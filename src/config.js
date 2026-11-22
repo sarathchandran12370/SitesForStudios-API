@@ -22,12 +22,36 @@ export const config = {
   mediaSecret: required('MEDIA_SIGNING_SECRET', 'dev-media-secret-change-me'),
   storageDriver: env.STORAGE_DRIVER || 'local',
   awsRegion: env.AWS_REGION || 'ap-south-1',
-  s3Bucket: env.S3_BUCKET || '',
+  s3Bucket: env.S3_BUCKET_NAME || env.S3_BUCKET || '',
   faceProvider: env.FACE_PROVIDER || 'none',
   // Secret header CloudFront adds to every request it forwards to the API (production only).
   originVerifySecret: env.ORIGIN_VERIFY_SECRET || '',
   // Path to the RDS CA bundle; when set, PostgreSQL connections use verified TLS.
   databaseSslCa: env.DATABASE_SSL_CA || '',
+  // Photos processed at the same time. Keep 1 on small (1 GB) servers.
+  processingConcurrency: Math.max(1, Number(env.PROCESSING_CONCURRENCY || 1)),
+  notifications: {
+    // Email: "log" (dev: printed and stored in the notifications table) or "ses" (Amazon SES).
+    emailProvider: env.EMAIL_PROVIDER || 'log',
+    emailFrom: env.EMAIL_FROM || 'SitesForStudios <no-reply@sitesforstudios.in>',
+    // WhatsApp: "none" or "meta" (WhatsApp Business Cloud API with approved templates).
+    whatsappProvider: env.WHATSAPP_PROVIDER || 'none',
+    whatsappToken: env.WHATSAPP_TOKEN || '',
+    whatsappPhoneNumberId: env.WHATSAPP_PHONE_NUMBER_ID || '',
+    whatsappLanguage: env.WHATSAPP_TEMPLATE_LANGUAGE || 'en',
+    whatsappTemplates: {
+      invite: env.WHATSAPP_TEMPLATE_INVITE || '',
+      photosReady: env.WHATSAPP_TEMPLATE_PHOTOS_READY || '',
+      enquiry: env.WHATSAPP_TEMPLATE_ENQUIRY || '',
+      retention: env.WHATSAPP_TEMPLATE_RETENTION || '',
+    },
+  },
+  retention: {
+    // Hours between retention checks (warnings, archiving, restores). 0 disables the scheduler.
+    checkEveryHours: Number(env.RETENTION_CHECK_HOURS ?? 1),
+    restoreExtendsMonths: Number(env.RESTORE_EXTENDS_MONTHS || 6),
+    restorePriceInr: Number(env.RESTORE_PRICE_INR || 499),
+  },
   razorpay: {
     keyId: env.RAZORPAY_KEY_ID || '',
     keySecret: env.RAZORPAY_KEY_SECRET || '',

@@ -9,12 +9,17 @@ import { storage } from '../services/storage.js';
 import { enqueuePhoto } from '../services/processing.js';
 import { deleteEventFaces } from '../services/faces.js';
 import { parse, HttpError } from '../util.js';
+import { notify, studioBrand } from '../services/notify.js';
+import { photosReadyMessage } from '../services/messages.js';
+import { requestEventRestore } from '../services/retention.js';
+import { config } from '../config.js';
 import { photoView } from './photoView.js';
 
 const r = Router();
 r.use(requireRole(...STUDIO_MANAGERS));
 
-const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic'];
+const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
+const HEIC_EXT = /\.(heic|heif)$/i; // many browsers send HEIC with an empty or generic type
 const RAW_EXT = /\.(cr2|cr3|nef|arw|raf|orf|rw2|dng|pef|srw)$/i;
 
 r.get('/studio/:studioId', async (req, res) => {
@@ -109,6 +114,7 @@ r.delete('/:id', async (req, res) => {
 r.post('/:id/uploads', async (req, res) => {
   const g = await eventGuard(req, res, req.params.id);
   if (!g) return;
+  if (g.event.status !== 'active') throw new HttpError(400, 'This event is archived. Restore it before uploading.');
   const { files, ceremony } = parse(
     z.object({
       ceremony: z.string().min(1).max(40).default('Wedding'),
@@ -130,6 +136,7 @@ r.post('/:id/uploads', async (req, res) => {
   const out = [];
   for (const f of files) {
     const isRaw = RAW_EXT.test(f.name);
+    if (!isRaw && HEIC_EXT.test(f.name) && !IMAGE_TYPES.includes(f.type)) f.type = 'image/heic';
     if (!isRaw && !IMAGE_TYPES.includes(f.type)) {
       out.push({ name: f.name, error: 'Unsupported file type' });
       continue;
@@ -169,6 +176,42 @@ r.post('/:id/uploads/complete', async (req, res) => {
     enqueuePhoto(p.id);
   }
   res.json({ queued: photos.length });
+});
+
+// Tell the event's clients their photos are ready (email + WhatsApp). The studio clicks this when
+// uploading is finished, so clients get one message instead of one per upload batch.
+r.post('/:id/notify-clients', async (req, res) => {
+  const g = await eventGuard(req, res, req.params.id);
+  if (!g) return;
+  if (g.event.status !== 'active') throw new HttpError(400, 'This event is archived');
+  const clients = await q(
+    `SELECT a.id, a.name, a.email, a.phone FROM event_access ea JOIN accounts a ON a.id = ea.account_id WHERE ea.event_id = $1`,
+    [g.event.id]
+  );
+  if (!clients.length) throw new HttpError(400, 'Add clients to this event first');
+  const photoCount = await Photo.countDocuments({ eventId: g.event.id, kind: 'image', status: 'ready' });
+  if (!photoCount) throw new HttpError(400, 'Upload photos before notifying clients');
+  const brand = await studioBrand(g.studio.id);
+  let emails = 0;
+  let whatsapps = 0;
+  for (const c of clients) {
+    const msg = photosReadyMessage({ brand, name: c.name, event: g.event, photoCount });
+    const r = await notify({ orgId: g.studio.org_id, kind: 'photos_ready', email: { to: c.email, ...msg.email }, whatsapp: c.phone ? { to: c.phone, ...msg.whatsapp } : undefined });
+    if (['sent', 'logged'].includes(r.email?.status)) emails++;
+    if (r.whatsapp?.status === 'sent') whatsapps++;
+  }
+  const [ev] = await q('UPDATE events SET clients_notified_at = now() WHERE id = $1 RETURNING clients_notified_at', [g.event.id]);
+  res.json({ clients: clients.length, emails, whatsapps, notifiedAt: ev.clients_notified_at });
+});
+
+// Restore add-on: bring an archived event back (S3 Deep Archive restore takes up to ~12 hours).
+r.post('/:id/restore', async (req, res) => {
+  const g = await eventGuard(req, res, req.params.id);
+  if (!g) return;
+  if (!['super_admin', 'org_admin', 'studio_admin'].includes(req.user.role)) throw new HttpError(403, 'Only studio admins can restore events');
+  if (g.event.status !== 'archived') throw new HttpError(400, g.event.status === 'restoring' ? 'A restore is already in progress' : 'This event is not archived');
+  const restore = await requestEventRestore({ event: g.event, orgId: g.studio.org_id, accountId: req.user.id });
+  res.json({ status: 'restoring', amountInr: restore.amount_inr, extendsMonths: config.retention.restoreExtendsMonths });
 });
 
 r.get('/:id/photos', async (req, res) => {

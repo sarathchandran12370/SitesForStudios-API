@@ -2,7 +2,7 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { one, q } from '../db/pg.js';
-import { issueSession, clearSession, requireAuth } from '../middleware/auth.js';
+import { issueSession, clearSession, requireAuth, isOrgBlocked, ORG_BLOCKED_MESSAGE } from '../middleware/auth.js';
 import { parse, checkPassword, hashPassword, HttpError, publicAccount } from '../util.js';
 
 const r = Router();
@@ -12,6 +12,10 @@ r.post('/login', loginLimiter, async (req, res) => {
   const { email, password } = parse(z.object({ email: z.string().email(), password: z.string().min(1) }), req.body);
   const acct = await one('SELECT * FROM accounts WHERE lower(email) = lower($1)', [email]);
   if (!acct || !(await checkPassword(password, acct.password_hash))) throw new HttpError(401, 'Wrong email or password');
+  if (acct.role !== 'super_admin' && acct.org_id) {
+    const org = await one('SELECT status FROM organizations WHERE id = $1', [acct.org_id]);
+    if (isOrgBlocked(org?.status)) throw new HttpError(403, ORG_BLOCKED_MESSAGE[org.status]);
+  }
   issueSession(res, acct);
   res.json({ user: await meFor(acct.id) });
 });

@@ -45,6 +45,22 @@ The API runs on http://localhost:4000. Check it with `GET /api/health`.
 
 These are local test values only.
 
+## Tests
+
+```bash
+npm test
+```
+
+Runs the API test suite (Node's built-in test runner) against a separate test database: PostgreSQL `sitesforstudios_test` (created automatically) and MongoDB `sitesforstudios_test`, with local file storage in a temp folder. Your dev data, S3 and AWS are never touched. Override the databases with `TEST_DATABASE_URL` and `TEST_MONGO_URL`. Set `TEST_VERBOSE=1` to see server logs.
+
+Covered: login and passwords, role checks, suspended organizations, plan editing and limits, notifications, retention (warnings, archive, restore), uploads incl. HEIC, ZIP and RAW downloads.
+
+## Notifications and retention
+
+- **Email:** `EMAIL_PROVIDER=log` (development) records messages in the `notifications` table, visible to the Super Admin under **Sent messages**. `EMAIL_PROVIDER=ses` sends through Amazon SES (verify the `EMAIL_FROM` domain in SES first).
+- **WhatsApp:** `WHATSAPP_PROVIDER=meta` with a WhatsApp Business Cloud API token, phone number ID and approved template names (`WHATSAPP_TEMPLATE_*`). Template parameters in order: invite `{{1}} name, {{2}} studio, {{3}} login URL, {{4}} email, {{5}} temporary password`; photos ready `{{1}} name, {{2}} event, {{3}} studio, {{4}} link`; enquiry `{{1}} name, {{2}} phone, {{3}} date, {{4}} link`; retention `{{1}} name, {{2}} event, {{3}} archive date, {{4}} link`.
+- **Retention:** every `RETENTION_CHECK_HOURS` the API warns the studio and couple 30 and 7 days before an event expires, archives expired events (originals and RAW to S3 Glacier Deep Archive, clients lose access) and completes restores. A restore (₹499 by default) takes up to ~12 hours on S3 and keeps the event online for 6 more months. Deep Archive bills a minimum of 180 days per object.
+
 ## Postman
 
 Import the files in [postman/](postman/) into Postman: the collection plus the Local and Production environments. Each folder starts with a login for its role, and requests save the ids they return, so run folders top to bottom. To run everything from the command line against a local API with demo data:

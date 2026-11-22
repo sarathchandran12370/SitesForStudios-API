@@ -25,8 +25,9 @@ export async function loadUser(req, _res, next) {
   try {
     const payload = jwt.verify(token, config.jwtSecret);
     const user = await one(
-      `SELECT id, email, name, phone, role, org_id, studio_id, must_change_password, token_version
-       FROM accounts WHERE id = $1`,
+      `SELECT a.id, a.email, a.name, a.phone, a.role, a.org_id, a.studio_id, a.must_change_password, a.token_version,
+              o.status AS org_status
+       FROM accounts a LEFT JOIN organizations o ON o.id = a.org_id WHERE a.id = $1`,
       [payload.sub]
     );
     if (user && user.token_version === payload.v) req.user = user;
@@ -34,6 +35,30 @@ export async function loadUser(req, _res, next) {
     /* invalid or expired token: treat as logged out */
   }
   next();
+}
+
+// Organizations that stopped paying or were closed lose access to dashboards, the client portal
+// and their websites. past_due and trial still work (the dashboard shows a banner).
+export const BLOCKED_ORG_STATUSES = ['suspended', 'cancelled'];
+
+export function isOrgBlocked(status) {
+  return BLOCKED_ORG_STATUSES.includes(status);
+}
+
+export const ORG_BLOCKED_MESSAGE = {
+  suspended: 'This account is suspended. Please contact SitesForStudios support.',
+  cancelled: 'This account has been closed. Please contact SitesForStudios support.',
+};
+
+/**
+ * Refuses every request from a user whose organization is suspended or cancelled, except
+ * reading who they are and logging out (so the app can show the reason). Super Admin is never blocked.
+ */
+export function blockInactiveOrg(req, res, next) {
+  const u = req.user;
+  if (!u || u.role === 'super_admin' || !isOrgBlocked(u.org_status)) return next();
+  if (req.path === '/api/auth/me' || req.path === '/api/auth/logout') return next();
+  res.status(403).json({ error: ORG_BLOCKED_MESSAGE[u.org_status], code: 'ORG_BLOCKED', orgStatus: u.org_status });
 }
 
 export function requireAuth(req, res, next) {

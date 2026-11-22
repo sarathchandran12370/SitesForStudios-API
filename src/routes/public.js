@@ -8,6 +8,9 @@ import { SiteConfig, Photo } from '../models/index.js';
 import { storage, localStorage } from '../services/storage.js';
 import { config } from '../config.js';
 import { parse, HttpError } from '../util.js';
+import { BLOCKED_ORG_STATUSES } from '../middleware/auth.js';
+import { notify, studioBrand, studioRecipients } from '../services/notify.js';
+import { enquiryMessage } from '../services/messages.js';
 
 const r = Router();
 
@@ -46,7 +49,11 @@ async function siteData(studio) {
 }
 
 r.get('/sites/:slug', async (req, res) => {
-  const studio = await one('SELECT * FROM studios WHERE slug = $1', [req.params.slug]);
+  const studio = await one(
+    `SELECT s.* FROM studios s JOIN organizations o ON o.id = s.org_id
+     WHERE s.slug = $1 AND o.status <> ALL($2)`,
+    [req.params.slug, BLOCKED_ORG_STATUSES]
+  );
   if (!studio) throw new HttpError(404, 'Site not found');
   res.set('Cache-Control', 'public, max-age=60');
   res.json(await siteData(studio));
@@ -55,7 +62,11 @@ r.get('/sites/:slug', async (req, res) => {
 // Custom domains: the web app calls this with window.location.host.
 r.get('/sites-by-host/:host', async (req, res) => {
   const host = req.params.host.toLowerCase().replace(/:\d+$/, '');
-  const studio = await one(`SELECT * FROM studios WHERE custom_domain = $1 AND domain_status IN ('verified','live')`, [host]);
+  const studio = await one(
+    `SELECT s.* FROM studios s JOIN organizations o ON o.id = s.org_id
+     WHERE s.custom_domain = $1 AND s.domain_status IN ('verified','live') AND o.status <> ALL($2)`,
+    [host, BLOCKED_ORG_STATUSES]
+  );
   if (!studio) throw new HttpError(404, 'Site not found');
   res.json(await siteData(studio));
 });
@@ -63,7 +74,11 @@ r.get('/sites-by-host/:host', async (req, res) => {
 const enquiryLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 10, standardHeaders: true, legacyHeaders: false });
 
 r.post('/sites/:slug/enquiries', enquiryLimiter, express.json({ limit: '32kb' }), async (req, res) => {
-  const studio = await one('SELECT id FROM studios WHERE slug = $1', [req.params.slug]);
+  const studio = await one(
+    `SELECT s.id, s.name, s.org_id FROM studios s JOIN organizations o ON o.id = s.org_id
+     WHERE s.slug = $1 AND o.status <> ALL($2)`,
+    [req.params.slug, BLOCKED_ORG_STATUSES]
+  );
   if (!studio) throw new HttpError(404, 'Site not found');
   const b = parse(
     z.object({
@@ -84,12 +99,18 @@ r.post('/sites/:slug/enquiries', enquiryLimiter, express.json({ limit: '32kb' })
     const booked = await one('SELECT 1 FROM events WHERE studio_id = $1 AND event_date = $2', [studio.id, b.eventDate]);
     dateAvailable = !booked;
   }
-  await q(
+  const [enquiry] = await q(
     `INSERT INTO enquiries(studio_id, name, phone, email, event_date, city, event_type, budget, message, date_available)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
     [studio.id, b.name, b.phone, b.email || null, b.eventDate || null, b.city || null, b.eventType || null, b.budget || null, b.message || null, dateAvailable]
   );
-  // TODO(prod): notify the studio by email (SES) and WhatsApp Business API.
+  const brand = await studioBrand(studio.id);
+  const to = await studioRecipients(brand);
+  const msg = enquiryMessage({ brand, enquiry });
+  await Promise.all([
+    ...to.emails.map((email) => notify({ orgId: studio.org_id, kind: 'enquiry', email: { to: email, ...msg.email } })),
+    to.whatsapp ? notify({ orgId: studio.org_id, kind: 'enquiry', whatsapp: { to: to.whatsapp, ...msg.whatsapp } }) : null,
+  ]);
   res.status(201).json({ ok: true, dateAvailable });
 });
 

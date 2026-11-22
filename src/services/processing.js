@@ -1,12 +1,29 @@
 // In-process job queue for photo processing (thumbnails + face indexing).
 // Production: replace with S3 event -> SQS -> Lambda workers; the per-photo function stays the same.
 import sharp from 'sharp';
+import convertHeic from 'heic-convert';
 import { storage } from './storage.js';
 import { Photo } from '../models/index.js';
 import { indexPhotoFaces, facesEnabled } from './faces.js';
 import { q } from '../db/pg.js';
+import { config } from '../config.js';
 
-const CONCURRENCY = 2;
+// Small servers: one photo at a time, no libvips cache (keeps memory low; see PROCESSING_CONCURRENCY).
+const CONCURRENCY = config.processingConcurrency;
+sharp.cache(false);
+if (CONCURRENCY === 1) sharp.concurrency(1);
+
+// HEIC/HEIF (iPhone) brands in the file's "ftyp" box. sharp's prebuilt binaries can't decode HEVC images,
+// so these are converted to JPEG in memory first. The original HEIC file is still what clients download.
+const HEIC_BRANDS = ['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'mif1', 'msf1'];
+export function isHeic(buf) {
+  return buf.length > 12 && buf.toString('ascii', 4, 8) === 'ftyp' && HEIC_BRANDS.includes(buf.toString('ascii', 8, 12));
+}
+
+async function decodable(buf) {
+  if (!isHeic(buf)) return buf;
+  return Buffer.from(await convertHeic({ buffer: buf, format: 'JPEG', quality: 0.92 }));
+}
 const queue = [];
 let running = 0;
 
@@ -42,12 +59,21 @@ export async function processPhoto(photoId) {
       await addEventBytes(photo.eventId, bytes);
       return;
     }
-    const original = await storage.getBuffer(photo.originalKey);
-    const img = sharp(original, { failOn: 'none' }).rotate();
-    const meta = await img.metadata();
-    const base = photo.originalKey.replace(/\/original\/[^/]+$/, '');
-    const thumb = await sharp(original).rotate().resize({ width: 480, height: 480, fit: 'inside' }).webp({ quality: 72 }).toBuffer();
-    const web = await sharp(original).rotate().resize({ width: 2048, height: 2048, fit: 'inside', withoutEnlargement: true }).webp({ quality: 82 }).toBuffer();
+    const input = await decodable(await storage.getBuffer(photo.originalKey));
+    const meta = await sharp(input).metadata(); // header only, no decode
+    const base = photo.originalKey.replace(/\/(original|raw)\/[^/]+$/, '');
+
+    // Decode the full-size photo once into a 2048 px working copy; every variant is made from that.
+    const { data, info } = await sharp(input, { failOn: 'none' })
+      .rotate()
+      .resize({ width: 2048, height: 2048, fit: 'inside', withoutEnlargement: true })
+      .removeAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const working = () => sharp(data, { raw: { width: info.width, height: info.height, channels: info.channels } });
+    const web = await working().webp({ quality: 82 }).toBuffer();
+    const thumb = await working().resize({ width: 480, height: 480, fit: 'inside' }).webp({ quality: 72 }).toBuffer();
+
     const thumbKey = `${base}/thumb/${photo.id}.webp`;
     const webKey = `${base}/web/${photo.id}.webp`;
     await storage.put(thumbKey, thumb, 'image/webp');
@@ -57,14 +83,15 @@ export async function processPhoto(photoId) {
     photo.height = rotated ? meta.width : meta.height;
     photo.variants = { thumb: thumbKey, web: webKey };
     photo.status = 'ready';
+    photo.error = undefined;
     await photo.save();
     await addEventBytes(photo.eventId, bytes + thumb.length + web.length);
 
     if (facesEnabled()) {
       const [event] = await q('SELECT face_enabled FROM events WHERE id = $1', [photo.eventId]);
       if (event?.face_enabled) {
-        // Rekognition accepts up to 5 MB; send a 1600px JPEG.
-        const jpeg = await sharp(original).rotate().resize({ width: 1600, height: 1600, fit: 'inside' }).jpeg({ quality: 85 }).toBuffer();
+        // Rekognition accepts up to 5 MB; send a 1600 px JPEG made from the working copy.
+        const jpeg = await working().resize({ width: 1600, height: 1600, fit: 'inside' }).jpeg({ quality: 85 }).toBuffer();
         await indexPhotoFaces({ eventId: photo.eventId, photoId: photo.id, imageBytes: jpeg });
         photo.facesIndexed = true;
         await photo.save();

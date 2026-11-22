@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { config } from '../config.js';
 
-const LOCAL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../storage');
+const LOCAL_ROOT = path.resolve(process.env.LOCAL_STORAGE_DIR || path.join(path.dirname(fileURLToPath(import.meta.url)), '../../storage'));
 
 function sign(value) {
   return crypto.createHmac('sha256', config.mediaSecret).update(value).digest('base64url');
@@ -80,6 +80,13 @@ const local = {
     const sig = sign(`put:${key}:${exp}`);
     return { url: `/api/uploads/${key}?exp=${exp}&sig=${sig}`, method: 'PUT', headers: { 'Content-Type': contentType } };
   },
+  // Archiving only exists on S3. Locally files stay where they are and restores are instant.
+  async archive() {},
+  async requestRestore() {},
+  async isRestored() {
+    return true;
+  },
+  async unarchive() {},
   verifyGet(key, exp, sig, dl = '') {
     return Number(exp) > Date.now() / 1000 && verifySignature(`get:${key}:${exp}:${dl ? encodeURIComponent(dl) : ''}`, sig);
   },
@@ -113,6 +120,51 @@ const s3driver = {
   async remove(key) {
     const { DeleteObjectCommand } = await import('@aws-sdk/client-s3');
     await (await s3client()).send(new DeleteObjectCommand({ Bucket: config.s3Bucket, Key: key }));
+  },
+  // Retention: move an object to Glacier Deep Archive in place (same key, tags kept).
+  async archive(key) {
+    const { CopyObjectCommand } = await import('@aws-sdk/client-s3');
+    await (await s3client()).send(
+      new CopyObjectCommand({
+        Bucket: config.s3Bucket,
+        Key: key,
+        CopySource: encodeURI(`${config.s3Bucket}/${key}`),
+        StorageClass: 'DEEP_ARCHIVE',
+        MetadataDirective: 'COPY',
+        TaggingDirective: 'COPY',
+      })
+    );
+  },
+  // Ask S3 to bring an archived object back (Standard tier: within ~12 hours).
+  async requestRestore(key) {
+    const { RestoreObjectCommand } = await import('@aws-sdk/client-s3');
+    try {
+      await (await s3client()).send(
+        new RestoreObjectCommand({ Bucket: config.s3Bucket, Key: key, RestoreRequest: { Days: 7, GlacierJobParameters: { Tier: 'Standard' } } })
+      );
+    } catch (e) {
+      if (e.name !== 'RestoreAlreadyInProgress') throw e;
+    }
+  },
+  async isRestored(key) {
+    const { HeadObjectCommand } = await import('@aws-sdk/client-s3');
+    const head = await (await s3client()).send(new HeadObjectCommand({ Bucket: config.s3Bucket, Key: key }));
+    if (head.StorageClass !== 'DEEP_ARCHIVE' && head.StorageClass !== 'GLACIER') return true;
+    return /ongoing-request="false"/.test(head.Restore || '');
+  },
+  // After a restore finishes, copy it back to a normal storage class so it stays available.
+  async unarchive(key, storageClass = 'STANDARD_IA') {
+    const { CopyObjectCommand } = await import('@aws-sdk/client-s3');
+    await (await s3client()).send(
+      new CopyObjectCommand({
+        Bucket: config.s3Bucket,
+        Key: key,
+        CopySource: encodeURI(`${config.s3Bucket}/${key}`),
+        StorageClass: storageClass,
+        MetadataDirective: 'COPY',
+        TaggingDirective: 'COPY',
+      })
+    );
   },
   async url(key, { expiresIn = 900, download } = {}) {
     const { GetObjectCommand } = await import('@aws-sdk/client-s3');
