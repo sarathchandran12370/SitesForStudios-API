@@ -9,7 +9,8 @@ const SiteConfigSchema = new Schema(
     templateId: { type: String, default: 'editorial' },
     theme: {
       accent: { type: String, default: '#b08d57' },
-      fontPair: { type: String, enum: ['classic', 'modern', 'editorial'], default: 'editorial' },
+      // "template" uses the selected template's own fonts; the others override them.
+      fontPair: { type: String, enum: ['template', 'classic', 'modern', 'editorial'], default: 'template' },
     },
     logoKey: String,
     heroPhotoIds: [String],

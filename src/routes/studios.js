@@ -55,7 +55,7 @@ r.get('/:id/site', async (req, res) => {
 const SECTION_IDS = ['about', 'portfolio', 'packages', 'testimonials', 'faq', 'contact'];
 const siteSchema = z.object({
   templateId: z.string().optional(),
-  theme: z.object({ accent: z.string().regex(/^#[0-9a-fA-F]{6}$/), fontPair: z.enum(['classic', 'modern', 'editorial']) }).optional(),
+  theme: z.object({ accent: z.string().regex(/^#[0-9a-fA-F]{6}$/), fontPair: z.enum(['template', 'classic', 'modern', 'editorial']) }).optional(),
   tagline: z.string().max(140).optional(),
   about: z.string().max(3000).optional(),
   heroPhotoIds: z.array(z.string()).max(6).optional(),

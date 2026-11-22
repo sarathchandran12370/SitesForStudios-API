@@ -20,6 +20,9 @@ export async function seedPlansAndTemplates() {
     ['editorial', 'Editorial Minimal', 'Clean white space, serif headlines and a story-led portfolio.', 'standard'],
     ['luxe', 'Classic Luxe', 'Ivory and gold tones with elegant script accents for traditional weddings.', 'standard'],
     ['cinematic', 'Dark Cinematic', 'Full-bleed imagery on a dark canvas, made for films and dramatic photos.', 'premium'],
+    ['boho', 'Boho Film', 'Warm, earthy and relaxed: film grain, handwritten accents and polaroid-style prints.', 'standard'],
+    ['indian', 'Indian Traditional', 'Ivory, maroon and gold with ornamental frames, made for grand multi-day Indian weddings.', 'premium'],
+    ['grid', 'Modern Grid', 'Bold type, clean white space and a strict photo grid for contemporary studios.', 'standard'],
   ];
   for (const t of templates) {
     await q(
