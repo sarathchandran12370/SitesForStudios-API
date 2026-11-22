@@ -24,6 +24,10 @@ export const config = {
   awsRegion: env.AWS_REGION || 'ap-south-1',
   s3Bucket: env.S3_BUCKET || '',
   faceProvider: env.FACE_PROVIDER || 'none',
+  // Secret header CloudFront adds to every request it forwards to the API (production only).
+  originVerifySecret: env.ORIGIN_VERIFY_SECRET || '',
+  // Path to the RDS CA bundle; when set, PostgreSQL connections use verified TLS.
+  databaseSslCa: env.DATABASE_SSL_CA || '',
   razorpay: {
     keyId: env.RAZORPAY_KEY_ID || '',
     keySecret: env.RAZORPAY_KEY_SECRET || '',

@@ -152,7 +152,7 @@ r.post('/:id/uploads', async (req, res) => {
       bytes: f.size,
       status: 'awaiting',
     });
-    out.push({ name: f.name, photoId: photo.id, upload: await storage.uploadUrl(key, { contentType }) });
+    out.push({ name: f.name, photoId: photo.id, upload: await storage.uploadUrl(key, { contentType, storageClass: isRaw ? 'raw' : 'original' }) });
   }
   res.json({ files: out });
 });

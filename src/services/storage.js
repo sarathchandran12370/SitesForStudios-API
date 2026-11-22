@@ -124,11 +124,17 @@ const s3driver = {
     });
     return getSignedUrl(await s3client(), cmd, { expiresIn });
   },
-  async uploadUrl(key, { expiresIn = 3600, contentType } = {}) {
+  // `storageClass` becomes an object tag ("class=raw" / "class=original"); S3 lifecycle rules
+  // use it to move RAW to Glacier Instant Retrieval and originals to Standard-IA.
+  async uploadUrl(key, { expiresIn = 3600, contentType, storageClass } = {}) {
     const { PutObjectCommand } = await import('@aws-sdk/client-s3');
     const { getSignedUrl } = await import('@aws-sdk/s3-request-presigner');
-    const cmd = new PutObjectCommand({ Bucket: config.s3Bucket, Key: key, ContentType: contentType });
-    return { url: await getSignedUrl(await s3client(), cmd, { expiresIn }), method: 'PUT', headers: { 'Content-Type': contentType } };
+    const tagging = storageClass ? `class=${storageClass}` : undefined;
+    const cmd = new PutObjectCommand({ Bucket: config.s3Bucket, Key: key, ContentType: contentType, Tagging: tagging });
+    const headers = { 'Content-Type': contentType };
+    if (tagging) headers['x-amz-tagging'] = tagging;
+    const url = await getSignedUrl(await s3client(), cmd, { expiresIn, unhoistableHeaders: new Set(tagging ? ['x-amz-tagging'] : []) });
+    return { url, method: 'PUT', headers };
   },
 };
 

@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import pg from 'pg';
 import { config } from '../config.js';
 
@@ -5,7 +6,12 @@ import { config } from '../config.js';
 pg.types.setTypeParser(1082, (v) => v);
 pg.types.setTypeParser(20, (v) => Number(v));
 
-export const pool = new pg.Pool({ connectionString: config.databaseUrl, max: 10 });
+export const pool = new pg.Pool({
+  connectionString: config.databaseUrl,
+  max: 10,
+  // RDS PostgreSQL 16 requires TLS; verify the server with the RDS CA bundle.
+  ssl: config.databaseSslCa ? { ca: fs.readFileSync(config.databaseSslCa, 'utf8') } : undefined,
+});
 
 export async function q(text, params) {
   const res = await pool.query(text, params);

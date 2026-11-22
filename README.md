@@ -83,6 +83,10 @@ src/
 - **Custom domains:** a studio sets a domain, adds a CNAME to `SITES_CNAME_TARGET` and a TXT record, then verifies.
 - **Plans:** storage quota, studios per organization, staff seats, RAW delivery and premium templates are enforced here.
 
+## Deployment
+
+Pushes to `main` deploy to AWS Mumbai through GitHub Actions (`.github/workflows/deploy.yml`). The one-time AWS setup for both repos is in [DEPLOYMENT.md](DEPLOYMENT.md), using the CloudFormation template in [deploy/cloudformation.yml](deploy/cloudformation.yml).
+
 ## Production checklist
 
 - [ ] `NODE_ENV=production`, real `JWT_SECRET` and `MEDIA_SIGNING_SECRET`.

@@ -19,6 +19,17 @@ const app = express();
 app.set('trust proxy', 1);
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'same-site' }, contentSecurityPolicy: false }));
 
+// In production the API is only reachable through CloudFront, which adds a secret header.
+// Requests without it (someone hitting the server directly) are refused. Localhost is allowed
+// so the deploy script can health-check the server on the instance.
+if (config.originVerifySecret) {
+  app.use((req, res, next) => {
+    const local = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
+    if (local || req.get('x-origin-verify') === config.originVerifySecret) return next();
+    res.status(403).json({ error: 'Forbidden' });
+  });
+}
+
 // Webhook needs the raw body, so it is mounted before the JSON parser.
 app.post('/api/billing/webhook', ...webhook);
 
