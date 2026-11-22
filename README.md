@@ -45,6 +45,14 @@ The API runs on http://localhost:4000. Check it with `GET /api/health`.
 
 These are local test values only.
 
+## Postman
+
+Import the files in [postman/](postman/) into Postman: the collection plus the Local and Production environments. Each folder starts with a login for its role, and requests save the ids they return, so run folders top to bottom. To run everything from the command line against a local API with demo data:
+
+```bash
+npx newman run postman/SitesForStudios-API.postman_collection.json -e postman/SitesForStudios-Local.postman_environment.json
+```
+
 ## Structure
 
 ```

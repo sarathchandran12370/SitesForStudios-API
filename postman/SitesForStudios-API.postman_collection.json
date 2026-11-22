@@ -1,0 +1,2850 @@
+{
+  "info": {
+    "name": "SitesForStudios API",
+    "description": "Backend for SitesForStudios (wedding studio websites + client photo delivery).\n\nAuth is a cookie session: run a \"Log in as …\" request first; Postman keeps the cookie. Each folder starts with the login for its role.\n\nRequests save ids they return (studioId, eventId, photoId, accountId, clusterId…) into collection variables, so run folders top to bottom.\n\nPick the \"SitesForStudios Local\" environment for http://localhost:4000 (demo data from `npm run seed -- --demo`).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "0. Health & Auth",
+      "description": "Health check and session endpoints shared by every role. Users cannot sign up and there is no forgot-password endpoint: studios create accounts and reset passwords.",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Returns {\"ok\":true} when the API and PostgreSQL are reachable."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Log in as Super Admin",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Logs in and stores the session cookie (sfs_session) in Postman's cookie jar. Every following request in this folder runs as the Super Admin.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{superAdminEmail}}\",\n  \"password\": \"{{superAdminPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "const u = pm.response.json().user;",
+                  "pm.test('role', () => pm.expect(u.role).to.be.a('string'));",
+                  "if (u.studio_id) pm.collectionVariables.set('studioId', u.studio_id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Who am I",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "me"
+              ]
+            },
+            "description": "Current user (null when logged out), with org, plan and studio names."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Change my password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/change-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "change-password"
+              ]
+            },
+            "description": "Any logged-in user. Logs out other devices (token_version is bumped) and keeps this session. As shipped, newPassword equals the current one, so the API answers 400 and nothing changes (safe in collection runs). Put a real new password in the body to change it.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"{{superAdminPassword}}\",\n  \"newPassword\": \"{{superAdminPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('2xx or 400', () => pm.expect([200, 400]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Log out",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/logout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "logout"
+              ]
+            },
+            "description": "Clears the session cookie."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "1. Super Admin",
+      "description": "Role: super_admin. Platform overview, plans and organizations.",
+      "item": [
+        {
+          "name": "Log in as Super Admin",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Logs in and stores the session cookie (sfs_session) in Postman's cookie jar. Every following request in this folder runs as the Super Admin.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{superAdminEmail}}\",\n  \"password\": \"{{superAdminPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "const u = pm.response.json().user;",
+                  "pm.test('role', () => pm.expect(u.role).to.be.a('string'));",
+                  "if (u.studio_id) pm.collectionVariables.set('studioId', u.studio_id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Platform overview",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/overview",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "overview"
+              ]
+            },
+            "description": "Counts of organizations, studios, events, storage, enquiries (30 days) and MRR in INR."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "List plans",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/plans",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "plans"
+              ]
+            },
+            "description": "Starter, Pro, Organization with limits and prices."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Update plan",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/plans/pro",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "plans",
+                "pro"
+              ]
+            },
+            "description": "Edit a plan. `razorpay_plan_id` links it to a Razorpay plan for subscriptions.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"price_monthly_inr\": 6999,\n  \"price_yearly_inr\": 69990,\n  \"storage_gb\": 1536,\n  \"max_studios\": 1,\n  \"face_events_per_month\": 8,\n  \"staff_seats\": 3,\n  \"razorpay_plan_id\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "List organizations",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/orgs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "orgs"
+              ]
+            },
+            "description": "All organizations with plan, owner email, studio count and storage used. Saves the first id as {{orgId}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "const orgs = pm.response.json();",
+                  "if (orgs.length) pm.collectionVariables.set('orgId', orgs[0].id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Create organization",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/orgs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "orgs"
+              ]
+            },
+            "description": "Creates the organization and its owner login. The response contains a one-time temporary password for the owner. Saves {{newOrgId}}.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Lens & Vows Studios\",\n  \"planId\": \"pro\",\n  \"ownerName\": \"Meera Nair\",\n  \"ownerEmail\": \"owner+{{$timestamp}}@example.com\",\n  \"ownerPhone\": \"+919800000000\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "const r = pm.response.json();",
+                  "pm.collectionVariables.set('newOrgId', r.org.id);",
+                  "console.log('Owner temporary password:', r.owner.temporaryPassword);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Update organization (plan / status)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/orgs/{{newOrgId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "orgs",
+                "{{newOrgId}}"
+              ]
+            },
+            "description": "Change plan, status (trial, active, past_due, suspended, cancelled) or name.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"planId\": \"organization\",\n  \"status\": \"active\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "2. Organization",
+      "description": "Role: org_admin (super_admin can also call these with ?orgId=). The paying customer: plan, usage and studios.",
+      "item": [
+        {
+          "name": "Log in as Organization owner",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Logs in and stores the session cookie (sfs_session) in Postman's cookie jar. Every following request in this folder runs as the Organization owner.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{orgEmail}}\",\n  \"password\": \"{{orgPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "const u = pm.response.json().user;",
+                  "pm.test('role', () => pm.expect(u.role).to.be.a('string'));",
+                  "if (u.studio_id) pm.collectionVariables.set('studioId', u.studio_id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "My organization (plan + usage)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/org/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "org",
+                "me"
+              ]
+            },
+            "description": "Plan limits and current storage/events usage."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "List studios",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/org/studios",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "org",
+                "studios"
+              ]
+            },
+            "description": "Studios (partners) in this organization with event and new-enquiry counts. Saves {{studioId}} and {{slug}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "const s = pm.response.json();",
+                  "if (s.length) { pm.collectionVariables.set('studioId', s[0].id); pm.collectionVariables.set('slug', s[0].slug); }"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Create studio",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/org/studios",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "org",
+                "studios"
+              ]
+            },
+            "description": "Creates a studio (fails with 402 when the plan limit is reached). Optionally creates a studio_admin login and returns its temporary password. templateId: editorial | luxe | cinematic (premium).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Vows Studio {{$randomInt}}\",\n  \"templateId\": \"editorial\",\n  \"adminName\": \"Studio Admin\",\n  \"adminEmail\": \"studio+{{$timestamp}}@example.com\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 or 402 (plan limit)', () => pm.expect([201, 402]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "3. Studio - Website & Domain",
+      "description": "Roles: studio_admin, staff (and org_admin / super_admin for their studios).",
+      "item": [
+        {
+          "name": "Log in as Studio admin",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Logs in and stores the session cookie (sfs_session) in Postman's cookie jar. Every following request in this folder runs as the Studio admin.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{studioEmail}}\",\n  \"password\": \"{{studioPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "const u = pm.response.json().user;",
+                  "pm.test('role', () => pm.expect(u.role).to.be.a('string'));",
+                  "if (u.studio_id) pm.collectionVariables.set('studioId', u.studio_id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "My studios",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/studios/mine",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "studios",
+                "mine"
+              ]
+            },
+            "description": "Studios this user can manage. Saves {{studioId}} and {{slug}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "const s = pm.response.json();",
+                  "if (s.length) { pm.collectionVariables.set('studioId', s[0].id); pm.collectionVariables.set('slug', s[0].slug); }"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "List templates",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/studios/templates",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "studios",
+                "templates"
+              ]
+            },
+            "description": "Website templates with tier (standard / premium)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Studio details + plan",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/studios/{{studioId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "studios",
+                "{{studioId}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Get website settings",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/studios/{{studioId}}/site",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "studios",
+                "{{studioId}}",
+                "site"
+              ]
+            },
+            "description": "Site config (theme, sections, packages, testimonials, FAQ, contact, SEO) and highlight photos that can be used as hero images."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Update website settings",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/studios/{{studioId}}/site",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "studios",
+                "{{studioId}}",
+                "site"
+              ]
+            },
+            "description": "All fields are optional; send only what changes. `publish: true` makes the website live. Premium templates need the Pro plan (402).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"templateId\": \"editorial\",\n  \"theme\": {\n    \"accent\": \"#9a6b3c\",\n    \"fontPair\": \"editorial\"\n  },\n  \"tagline\": \"Wedding stories from Kerala and beyond\",\n  \"sections\": [\n    {\n      \"id\": \"about\",\n      \"enabled\": true\n    },\n    {\n      \"id\": \"portfolio\",\n      \"enabled\": true\n    },\n    {\n      \"id\": \"packages\",\n      \"enabled\": true\n    },\n    {\n      \"id\": \"testimonials\",\n      \"enabled\": true\n    },\n    {\n      \"id\": \"faq\",\n      \"enabled\": true\n    },\n    {\n      \"id\": \"contact\",\n      \"enabled\": true\n    }\n  ],\n  \"contact\": {\n    \"email\": \"hello@example.com\",\n    \"phone\": \"+91 98470 00000\",\n    \"whatsapp\": \"919847000000\",\n    \"city\": \"Kochi, Kerala\"\n  },\n  \"seo\": {\n    \"title\": \"Arjun Photography | Kerala Wedding Photographers\",\n    \"description\": \"Documentary wedding photography from Kochi.\"\n  },\n  \"publish\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Get logo upload URL",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/studios/{{studioId}}/logo-upload",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "studios",
+                "{{studioId}}",
+                "logo-upload"
+              ]
+            },
+            "description": "Returns a signed URL. PUT the image to {{uploadUrl}} (see \"Upload file to signed URL\" in folder 5), then save `logoKey` with Update website settings.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contentType\": \"image/png\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "const r = pm.response.json();",
+                  "pm.collectionVariables.set('logoKey', r.key);",
+                  "const u = r.upload.url; pm.collectionVariables.set('uploadUrl', u.startsWith('/') ? pm.variables.get('origin') + u : u);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Set custom domain",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/studios/{{studioId}}/domain",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "studios",
+                "{{studioId}}",
+                "domain"
+              ]
+            },
+            "description": "Returns the CNAME and TXT records the studio must add at its registrar. Send {\"domain\": null} to remove.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"domain\": \"www.example-studio.in\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Get domain status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/studios/{{studioId}}/domain",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "studios",
+                "{{studioId}}",
+                "domain"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Verify domain DNS",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/studios/{{studioId}}/domain/verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "studios",
+                "{{studioId}}",
+                "domain",
+                "verify"
+              ]
+            },
+            "description": "Checks the CNAME and TXT records now. Status becomes verified when both are found."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Remove custom domain",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/studios/{{studioId}}/domain",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "studios",
+                "{{studioId}}",
+                "domain"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"domain\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "4. Studio - Clients, Team & Enquiries",
+      "description": "Studios create client and staff accounts (no public sign-up) and manage website enquiries.",
+      "item": [
+        {
+          "name": "Log in as Studio admin",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Logs in and stores the session cookie (sfs_session) in Postman's cookie jar. Every following request in this folder runs as the Studio admin.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{studioEmail}}\",\n  \"password\": \"{{studioPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "const u = pm.response.json().user;",
+                  "pm.test('role', () => pm.expect(u.role).to.be.a('string'));",
+                  "if (u.studio_id) pm.collectionVariables.set('studioId', u.studio_id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "List events (to assign)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/events/studio/{{studioId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "studio",
+                "{{studioId}}"
+              ]
+            },
+            "description": "Saves an event id as {{eventId}} for the client assignment below."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "const e = pm.response.json();",
+                  "if (e.length) pm.collectionVariables.set('eventId', e[e.length - 1].id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "List clients",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/studios/{{studioId}}/accounts?role=client",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "studios",
+                "{{studioId}}",
+                "accounts"
+              ],
+              "query": [
+                {
+                  "key": "role",
+                  "value": "client"
+                }
+              ]
+            },
+            "description": "role=client (default) or role=staff. Includes the events each account can see."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "List team",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/studios/{{studioId}}/accounts?role=staff",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "studios",
+                "{{studioId}}",
+                "accounts"
+              ],
+              "query": [
+                {
+                  "key": "role",
+                  "value": "staff"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Create client account",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/studios/{{studioId}}/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "studios",
+                "{{studioId}}",
+                "accounts"
+              ]
+            },
+            "description": "accessLevel: primary (the couple: everything incl. RAW) or guest. Returns a one-time temporary password; the client must change it at first login. Saves {{accountId}}.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Anu & Vivek\",\n  \"email\": \"client+{{$timestamp}}@example.com\",\n  \"phone\": \"+919811111111\",\n  \"role\": \"client\",\n  \"events\": [\n    {\n      \"eventId\": \"{{eventId}}\",\n      \"accessLevel\": \"primary\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "const r = pm.response.json();",
+                  "pm.collectionVariables.set('accountId', r.account.id);",
+                  "pm.collectionVariables.set('newClientEmail', r.account.email);",
+                  "pm.collectionVariables.set('newClientTempPassword', r.temporaryPassword);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Create staff account",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/studios/{{studioId}}/accounts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "studios",
+                "{{studioId}}",
+                "accounts"
+              ]
+            },
+            "description": "Studio admins only. Limited by plan staff seats (402).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Second Shooter\",\n  \"email\": \"staff+{{$timestamp}}@example.com\",\n  \"role\": \"staff\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 or 402 (seat limit)', () => pm.expect([201, 402]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Set client events",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/studios/accounts/{{accountId}}/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "studios",
+                "accounts",
+                "{{accountId}}",
+                "events"
+              ]
+            },
+            "description": "Replaces the list of events this client can see.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"events\": [\n    {\n      \"eventId\": \"{{eventId}}\",\n      \"accessLevel\": \"guest\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Reset client password",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/studios/accounts/{{accountId}}/reset-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "studios",
+                "accounts",
+                "{{accountId}}",
+                "reset-password"
+              ]
+            },
+            "description": "Issues a new temporary password and logs the user out everywhere. This replaces \"forgot password\"."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "console.log('New temporary password:', pm.response.json().temporaryPassword);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Delete client account",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/studios/accounts/{{accountId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "studios",
+                "accounts",
+                "{{accountId}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "List enquiries",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/studios/{{studioId}}/enquiries",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "studios",
+                "{{studioId}}",
+                "enquiries"
+              ]
+            },
+            "description": "Enquiries from the website form, newest first. Saves {{enquiryId}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "const e = pm.response.json();",
+                  "if (e.length) pm.collectionVariables.set('enquiryId', e[0].id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Update enquiry status",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/studios/enquiries/{{enquiryId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "studios",
+                "enquiries",
+                "{{enquiryId}}"
+              ]
+            },
+            "description": "new | contacted | quoted | booked | lost",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"contacted\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "5. Studio - Events & Photos",
+      "description": "Upload flow: (1) request signed upload URLs, (2) PUT each file to its URL, (3) call uploads/complete. Processing makes thumbnails and indexes faces.",
+      "item": [
+        {
+          "name": "Log in as Studio admin",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Logs in and stores the session cookie (sfs_session) in Postman's cookie jar. Every following request in this folder runs as the Studio admin.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{studioEmail}}\",\n  \"password\": \"{{studioPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "const u = pm.response.json().user;",
+                  "pm.test('role', () => pm.expect(u.role).to.be.a('string'));",
+                  "if (u.studio_id) pm.collectionVariables.set('studioId', u.studio_id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "List events",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/events/studio/{{studioId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "studio",
+                "{{studioId}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Create event",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events/studio/{{studioId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "studio",
+                "{{studioId}}"
+              ]
+            },
+            "description": "rawEnabled needs the Pro plan (402). Saves {{eventId}}.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Anu & Vivek\",\n  \"eventDate\": \"2026-12-20\",\n  \"venue\": \"Bolgatty Palace, Kochi\",\n  \"rawEnabled\": true,\n  \"faceEnabled\": true,\n  \"showInPortfolio\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "pm.collectionVariables.set('eventId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Event details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/events/{{eventId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "{{eventId}}"
+              ]
+            },
+            "description": "Event with photo counts, ceremonies and clients."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Update event",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events/{{eventId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "{{eventId}}"
+              ]
+            },
+            "description": "Any of: title, eventDate, venue, rawEnabled, faceEnabled, showInPortfolio, coverPhotoId.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"venue\": \"Bolgatty Palace Heritage Hotel, Kochi\",\n  \"showInPortfolio\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "1. Request upload URLs",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events/{{eventId}}/uploads",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "{{eventId}}",
+                "uploads"
+              ]
+            },
+            "description": "Up to 200 files per call. RAW files (.cr3, .nef, .arw, .dng…) need rawEnabled on the event. Checks the organization storage quota (402). Saves {{photoId}} and {{uploadUrl}} for the first file.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ceremony\": \"Wedding\",\n  \"files\": [\n    {\n      \"name\": \"AR_2001.jpg\",\n      \"type\": \"image/jpeg\",\n      \"size\": 245000\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "const f = pm.response.json().files[0];",
+                  "pm.collectionVariables.set('photoId', f.photoId);",
+                  "const u = f.upload.url; pm.collectionVariables.set('uploadUrl', u.startsWith('/') ? pm.variables.get('origin') + u : u);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "2. Upload file to signed URL",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "image/jpeg"
+              }
+            ],
+            "url": {
+              "raw": "{{uploadUrl}}",
+              "host": [
+                "{{uploadUrl}}"
+              ]
+            },
+            "body": {
+              "mode": "file",
+              "file": {
+                "src": ""
+              }
+            },
+            "description": "Choose a JPEG under Body → binary before sending. In local dev this goes to the API (/api/uploads/...); in production it goes straight to S3. With S3 + RAW/originals, also send the x-amz-tagging header returned in step 1."
+          },
+          "event": [],
+          "response": []
+        },
+        {
+          "name": "3. Complete uploads",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events/{{eventId}}/uploads/complete",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "{{eventId}}",
+                "uploads",
+                "complete"
+              ]
+            },
+            "description": "Queues processing for files that finished uploading. Files never uploaded are ignored.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"photoIds\": [\n    \"{{photoId}}\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "List photos",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/events/{{eventId}}/photos?kind=image",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "{{eventId}}",
+                "photos"
+              ],
+              "query": [
+                {
+                  "key": "kind",
+                  "value": "image"
+                },
+                {
+                  "key": "ceremony",
+                  "value": "Wedding",
+                  "disabled": true
+                },
+                {
+                  "key": "highlights",
+                  "value": "1",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "kind=image|raw, optional ceremony and highlights=1. Each photo has signed thumb and web URLs."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "const p = pm.response.json();",
+                  "if (p.length) pm.collectionVariables.set('photoId', p[0].id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Update photos (highlight / ceremony)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events/{{eventId}}/photos",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "{{eventId}}",
+                "photos"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"photoIds\": [\n    \"{{photoId}}\"\n  ],\n  \"isHighlight\": true,\n  \"ceremony\": \"Wedding\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Set cover photo",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events/{{eventId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "{{eventId}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"coverPhotoId\": \"{{photoId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Delete photos",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/events/{{eventId}}/photos",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "{{eventId}}",
+                "photos"
+              ]
+            },
+            "description": "Deletes files from storage and their face data.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"photoIds\": [\n    \"{{photoId}}\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Delete event",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/events/{{eventId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events",
+                "{{eventId}}"
+              ]
+            },
+            "description": "Studio admins only. Deletes all photos, RAW files and face data of the event."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "6. Client Portal",
+      "description": "Role: client (studio managers can also open their own events). Clients only see events assigned to them.",
+      "item": [
+        {
+          "name": "Log in as Client (couple)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Logs in and stores the session cookie (sfs_session) in Postman's cookie jar. Every following request in this folder runs as the Client (couple).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{clientEmail}}\",\n  \"password\": \"{{clientPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "const u = pm.response.json().user;",
+                  "pm.test('role', () => pm.expect(u.role).to.be.a('string'));",
+                  "if (u.studio_id) pm.collectionVariables.set('studioId', u.studio_id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "My events",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/portal/events",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "portal",
+                "events"
+              ]
+            },
+            "description": "Events with cover image and photo count. Saves {{portalEventId}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "const e = pm.response.json();",
+                  "if (e.length) pm.collectionVariables.set('portalEventId', e[0].id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Event details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/portal/events/{{portalEventId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "portal",
+                "events",
+                "{{portalEventId}}"
+              ]
+            },
+            "description": "Ceremonies, highlight count, RAW availability (couple only) and whether face search is on."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Highlights",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/portal/events/{{portalEventId}}/photos?highlights=1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "portal",
+                "events",
+                "{{portalEventId}}",
+                "photos"
+              ],
+              "query": [
+                {
+                  "key": "highlights",
+                  "value": "1"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "const p = pm.response.json();",
+                  "if (p.length) pm.collectionVariables.set('portalPhotoId', p[0].id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "All photos (optionally by ceremony / person)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/portal/events/{{portalEventId}}/photos?",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "portal",
+                "events",
+                "{{portalEventId}}",
+                "photos"
+              ],
+              "query": [
+                {
+                  "key": "ceremony",
+                  "value": "Wedding",
+                  "disabled": true
+                },
+                {
+                  "key": "cluster",
+                  "value": "{{clusterId}}",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "People (face clusters)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/portal/events/{{portalEventId}}/people",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "portal",
+                "events",
+                "{{portalEventId}}",
+                "people"
+              ]
+            },
+            "description": "Empty unless FACE_PROVIDER=rekognition and photos were indexed. Saves {{clusterId}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "const p = pm.response.json();",
+                  "if (p.length) pm.collectionVariables.set('clusterId', p[0].id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Person cover image",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/portal/clusters/{{clusterId}}/cover",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "portal",
+                "clusters",
+                "{{clusterId}}",
+                "cover"
+              ]
+            },
+            "description": "Returns a 200×200 WebP face crop."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 or 404 (no faces yet)', () => pm.expect([200, 404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Name a person",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/portal/clusters/{{clusterId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "portal",
+                "clusters",
+                "{{clusterId}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"label\": \"Grandma\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 or 404 (no faces yet)', () => pm.expect([200, 404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Merge two people",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/portal/clusters/{{clusterId}}/merge",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "portal",
+                "clusters",
+                "{{clusterId}}",
+                "merge"
+              ]
+            },
+            "description": "Marks this person as the same as {{otherClusterId}}.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"intoId\": \"{{otherClusterId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('2xx, 400 or 404', () => pm.expect([200, 400, 404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Find me (selfie search)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "image/jpeg"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/portal/events/{{portalEventId}}/find-me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "portal",
+                "events",
+                "{{portalEventId}}",
+                "find-me"
+              ]
+            },
+            "body": {
+              "mode": "file",
+              "file": {
+                "src": ""
+              }
+            },
+            "description": "Choose a selfie under Body → binary. Returns the photos the person appears in. The selfie is not stored. Needs face recognition (400 otherwise)."
+          },
+          "event": [],
+          "response": []
+        },
+        {
+          "name": "Download one photo (full resolution)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/portal/photos/{{portalPhotoId}}/download",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "portal",
+                "photos",
+                "{{portalPhotoId}}",
+                "download"
+              ]
+            },
+            "description": "Redirects to a 15-minute signed URL for the original file. In Postman, turn off \"Automatically follow redirects\" to see the URL."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Download ZIP",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/portal/events/{{portalEventId}}/download?type=highlights",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "portal",
+                "events",
+                "{{portalEventId}}",
+                "download"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "highlights"
+                },
+                {
+                  "key": "ceremony",
+                  "value": "Wedding",
+                  "disabled": true
+                },
+                {
+                  "key": "ids",
+                  "value": "{{portalPhotoId}}",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "type = all | highlights | ceremony (with ceremony=) | selected (with ids=comma,separated) | raw (couple only, RAW delivery on). Streams a ZIP; use \"Send and Download\"."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "7. Public (no login)",
+      "description": "Studio websites and the enquiry form.",
+      "item": [
+        {
+          "name": "Studio website by slug",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/sites/{{slug}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sites",
+                "{{slug}}"
+              ]
+            },
+            "description": "Everything a template needs: studio, template id, site settings, hero images and portfolio."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Studio website by custom domain",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/sites-by-host/www.example-studio.in",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sites-by-host",
+                "www.example-studio.in"
+              ]
+            },
+            "description": "Used when the app is opened on a studio domain. 404 until the domain is verified."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 or 404', () => pm.expect([200, 404]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Submit enquiry",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sites/{{slug}}/enquiries",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sites",
+                "{{slug}}",
+                "enquiries"
+              ]
+            },
+            "description": "Rate limited to 10 per hour per IP. Response says whether the date is free (dateAvailable).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Riya & Sam\",\n  \"phone\": \"9876543210\",\n  \"email\": \"riya@example.com\",\n  \"eventDate\": \"2027-01-15\",\n  \"city\": \"Kochi\",\n  \"eventType\": \"Wedding\",\n  \"budget\": \"₹2–4 lakh\",\n  \"message\": \"Two-day wedding, ~400 guests.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "8. Billing (Razorpay)",
+      "description": "Needs RAZORPAY_* settings on the server.",
+      "item": [
+        {
+          "name": "Billing config",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/config",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "billing",
+                "config"
+              ]
+            },
+            "description": "Whether billing is enabled and the public key id for Razorpay Checkout."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Log in as Organization owner",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Logs in and stores the session cookie (sfs_session) in Postman's cookie jar. Every following request in this folder runs as the Organization owner.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{orgEmail}}\",\n  \"password\": \"{{orgPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 2xx', () => pm.expect(pm.response.code).to.be.within(200, 299));",
+                  "const u = pm.response.json().user;",
+                  "pm.test('role', () => pm.expect(u.role).to.be.a('string'));",
+                  "if (u.studio_id) pm.collectionVariables.set('studioId', u.studio_id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Start subscription",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/subscribe",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "billing",
+                "subscribe"
+              ]
+            },
+            "description": "Role: org_admin. Creates a Razorpay subscription for the plan. 503 until Razorpay keys are set."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200, 400 or 503', () => pm.expect([200, 400, 503]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Razorpay webhook (example)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Razorpay-Signature",
+                "value": "{{razorpaySignature}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/billing/webhook",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "billing",
+                "webhook"
+              ]
+            },
+            "description": "Called by Razorpay. Requires an HMAC-SHA256 signature of the raw body with RAZORPAY_WEBHOOK_SECRET; without it the API answers 400.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event\": \"subscription.activated\",\n  \"payload\": {\n    \"subscription\": {\n      \"entity\": {\n        \"id\": \"sub_XXXXXXXX\",\n        \"current_end\": 1798761600\n      }\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 without a valid signature', () => pm.expect([200, 400]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "studioId",
+      "value": ""
+    },
+    {
+      "key": "slug",
+      "value": ""
+    },
+    {
+      "key": "orgId",
+      "value": ""
+    },
+    {
+      "key": "newOrgId",
+      "value": ""
+    },
+    {
+      "key": "eventId",
+      "value": ""
+    },
+    {
+      "key": "photoId",
+      "value": ""
+    },
+    {
+      "key": "accountId",
+      "value": ""
+    },
+    {
+      "key": "enquiryId",
+      "value": ""
+    },
+    {
+      "key": "portalEventId",
+      "value": ""
+    },
+    {
+      "key": "portalPhotoId",
+      "value": ""
+    },
+    {
+      "key": "clusterId",
+      "value": ""
+    },
+    {
+      "key": "otherClusterId",
+      "value": ""
+    },
+    {
+      "key": "uploadUrl",
+      "value": ""
+    },
+    {
+      "key": "logoKey",
+      "value": ""
+    },
+    {
+      "key": "newClientEmail",
+      "value": ""
+    },
+    {
+      "key": "newClientTempPassword",
+      "value": ""
+    },
+    {
+      "key": "razorpaySignature",
+      "value": ""
+    }
+  ]
+}
