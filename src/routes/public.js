@@ -1,0 +1,115 @@
+// Public: studio websites (by slug or custom domain), enquiry form, signed media and local uploads.
+import { Router } from 'express';
+import express from 'express';
+import rateLimit from 'express-rate-limit';
+import { z } from 'zod';
+import { q, one } from '../db/pg.js';
+import { SiteConfig, Photo } from '../models/index.js';
+import { storage, localStorage } from '../services/storage.js';
+import { config } from '../config.js';
+import { parse, HttpError } from '../util.js';
+
+const r = Router();
+
+async function siteData(studio) {
+  const site = (await SiteConfig.findOne({ studioId: studio.id }).lean()) || {};
+  const urlFor = (k) => (k ? storage.url(k, { expiresIn: 6 * 3600 }) : null);
+  // Portfolio: highlights from events the studio marked "show in portfolio".
+  const events = await q(
+    `SELECT id, title, event_date, venue FROM events WHERE studio_id = $1 AND show_in_portfolio ORDER BY event_date DESC NULLS LAST LIMIT 12`,
+    [studio.id]
+  );
+  const portfolio = [];
+  for (const e of events) {
+    const photos = await Photo.find({ eventId: e.id, kind: 'image', status: 'ready', isHighlight: true }).sort({ filename: 1 }).limit(12).lean();
+    if (!photos.length) continue;
+    portfolio.push({
+      id: e.id,
+      title: e.title,
+      venue: e.venue,
+      photos: await Promise.all(photos.map(async (p) => ({ id: String(p._id), web: await urlFor(p.variants.web), thumb: await urlFor(p.variants.thumb), w: p.width, h: p.height }))),
+    });
+  }
+  let hero = [];
+  if (site.heroPhotoIds?.length) {
+    const hp = await Photo.find({ _id: { $in: site.heroPhotoIds }, studioId: studio.id, status: 'ready' }).lean();
+    hero = await Promise.all(hp.map((p) => urlFor(p.variants.web)));
+  }
+  if (!hero.length) hero = portfolio.flatMap((p) => p.photos).slice(0, 3).map((p) => p.web);
+  return {
+    studio: { id: studio.id, name: studio.name, slug: studio.slug, published: !!studio.published_at },
+    templateId: studio.template_id,
+    site: { ...site, _id: undefined, logoUrl: await urlFor(site.logoKey) },
+    hero,
+    portfolio,
+  };
+}
+
+r.get('/sites/:slug', async (req, res) => {
+  const studio = await one('SELECT * FROM studios WHERE slug = $1', [req.params.slug]);
+  if (!studio) throw new HttpError(404, 'Site not found');
+  res.set('Cache-Control', 'public, max-age=60');
+  res.json(await siteData(studio));
+});
+
+// Custom domains: the web app calls this with window.location.host.
+r.get('/sites-by-host/:host', async (req, res) => {
+  const host = req.params.host.toLowerCase().replace(/:\d+$/, '');
+  const studio = await one(`SELECT * FROM studios WHERE custom_domain = $1 AND domain_status IN ('verified','live')`, [host]);
+  if (!studio) throw new HttpError(404, 'Site not found');
+  res.json(await siteData(studio));
+});
+
+const enquiryLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 10, standardHeaders: true, legacyHeaders: false });
+
+r.post('/sites/:slug/enquiries', enquiryLimiter, express.json({ limit: '32kb' }), async (req, res) => {
+  const studio = await one('SELECT id FROM studios WHERE slug = $1', [req.params.slug]);
+  if (!studio) throw new HttpError(404, 'Site not found');
+  const b = parse(
+    z.object({
+      name: z.string().min(2).max(120),
+      phone: z.string().min(6).max(20),
+      email: z.string().email().optional().or(z.literal('')),
+      eventDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().or(z.literal('')),
+      city: z.string().max(80).optional(),
+      eventType: z.string().max(60).optional(),
+      budget: z.string().max(60).optional(),
+      message: z.string().max(2000).optional(),
+      website: z.string().max(0).optional(), // honeypot: bots fill this
+    }),
+    req.body
+  );
+  let dateAvailable = null;
+  if (b.eventDate) {
+    const booked = await one('SELECT 1 FROM events WHERE studio_id = $1 AND event_date = $2', [studio.id, b.eventDate]);
+    dateAvailable = !booked;
+  }
+  await q(
+    `INSERT INTO enquiries(studio_id, name, phone, email, event_date, city, event_type, budget, message, date_available)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+    [studio.id, b.name, b.phone, b.email || null, b.eventDate || null, b.city || null, b.eventType || null, b.budget || null, b.message || null, dateAvailable]
+  );
+  // TODO(prod): notify the studio by email (SES) and WhatsApp Business API.
+  res.status(201).json({ ok: true, dateAvailable });
+});
+
+// ---------- Local storage endpoints (dev only; S3 serves these in production) ----------
+
+if (config.storageDriver === 'local') {
+  r.get('/media/*key', (req, res) => {
+    const key = req.params.key.join('/');
+    if (!localStorage.verifyGet(key, req.query.exp, req.query.sig, req.query.dl)) return res.status(403).send('Link expired');
+    if (req.query.dl) res.attachment(String(req.query.dl));
+    res.set('Cache-Control', 'private, max-age=3600');
+    res.sendFile(localStorage.localPath(key));
+  });
+
+  r.put('/uploads/*key', async (req, res) => {
+    const key = req.params.key.join('/');
+    if (!localStorage.verifyPut(key, req.query.exp, req.query.sig)) return res.status(403).json({ error: 'Upload link expired' });
+    const out = await localStorage.putStream(key, req);
+    res.json({ ok: true, bytes: out.bytes });
+  });
+}
+
+export default r;
