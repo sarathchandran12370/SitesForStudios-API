@@ -6,6 +6,7 @@ import { Photo } from '../models/index.js';
 import { storage } from './storage.js';
 import { notify, studioBrand, studioRecipients } from './notify.js';
 import { retentionWarningMessage, archivedMessage, restoredMessage } from './messages.js';
+import { addRestoreAddon } from './billing.js';
 
 const DAY = 24 * 3600 * 1000;
 let running = false;
@@ -125,6 +126,8 @@ export async function requestEventRestore({ event, orgId, accountId }) {
     `INSERT INTO event_restores(event_id, org_id, requested_by, amount_inr) VALUES ($1,$2,$3,$4) RETURNING *`,
     [event.id, orgId, accountId, config.retention.restorePriceInr]
   );
+  // Bill it on the next subscription charge (Razorpay add-on). If that fails it stays "unbilled" for the Super Admin.
+  await addRestoreAddon(row).catch((e) => console.error('restore add-on failed', e.message));
   // Locally (no S3) the files are already "back"; finish right away instead of waiting for the scheduler.
   if (config.storageDriver !== 's3') setImmediate(() => runRetention().catch((e) => console.error('retention', e)));
   return row;

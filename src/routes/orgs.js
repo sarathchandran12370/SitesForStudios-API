@@ -32,6 +32,31 @@ r.get('/me', async (req, res) => {
   res.json({ ...org, usage: { storage_bytes: Number(usage.storage_bytes), events: usage.events } });
 });
 
+// Organization owners can rename the organization (it starts with the studio's name after self sign-up).
+r.patch('/me', async (req, res) => {
+  const { name } = parse(z.object({ name: z.string().trim().min(2).max(120) }), req.body);
+  res.json(await one('UPDATE organizations SET name = $2 WHERE id = $1 RETURNING id, name', [orgIdFor(req), name]));
+});
+
+// Organization-level getting-started steps.
+r.get('/onboarding', async (req, res) => {
+  const orgId = orgIdFor(req);
+  const row = await one(
+    `SELECT o.status, (SELECT count(*) FROM studios WHERE org_id = o.id)::int AS studios,
+            (SELECT count(*) FROM studios WHERE org_id = o.id AND published_at IS NOT NULL)::int AS published,
+            EXISTS (SELECT 1 FROM billing_profiles WHERE org_id = o.id) AS profile
+     FROM organizations o WHERE o.id = $1`,
+    [orgId]
+  );
+  const steps = [
+    { id: 'studio', label: 'Create your studios', done: row.studios > 0, to: '/org' },
+    { id: 'publish', label: 'Publish a studio website', done: row.published > 0, to: '/org' },
+    { id: 'billing', label: 'Add billing details for GST invoices', done: row.profile, to: '/org/billing' },
+    { id: 'plan', label: 'Choose a plan', done: row.status === 'active', to: '/org/billing' },
+  ];
+  res.json({ steps, done: steps.filter((s) => s.done).length, total: steps.length, complete: steps.every((s) => s.done) });
+});
+
 r.get('/studios', async (req, res) => {
   res.json(
     await q(

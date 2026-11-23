@@ -4,9 +4,11 @@ import { z } from 'zod';
 import { one, q } from '../db/pg.js';
 import { issueSession, clearSession, requireAuth, isOrgBlocked, ORG_BLOCKED_MESSAGE } from '../middleware/auth.js';
 import { parse, checkPassword, hashPassword, HttpError, publicAccount } from '../util.js';
+import { orgMode } from '../services/onboarding.js';
+import { config } from '../config.js';
 
 const r = Router();
-const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardHeaders: true, legacyHeaders: false });
+const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 20 * config.rateLimitScale, standardHeaders: true, legacyHeaders: false });
 
 r.post('/login', loginLimiter, async (req, res) => {
   const { email, password } = parse(z.object({ email: z.string().email(), password: z.string().min(1) }), req.body);
@@ -53,13 +55,22 @@ r.post('/change-password', requireAuth, async (req, res) => {
 
 async function meFor(id) {
   const a = await one(
-    `SELECT a.*, o.name AS org_name, o.plan_id, o.status AS org_status, s.name AS studio_name, s.slug AS studio_slug
+    `SELECT a.*, o.name AS org_name, o.plan_id, o.status AS org_status, o.trial_ends_at, o.expired_at,
+            s.name AS studio_name, s.slug AS studio_slug
      FROM accounts a
      LEFT JOIN organizations o ON o.id = a.org_id
      LEFT JOIN studios s ON s.id = a.studio_id
      WHERE a.id = $1`,
     [id]
   );
+  if (!a) return null;
+  // Owners of a one-studio organization only see their Studio dashboard ("single" mode).
+  if (a.role === 'org_admin') {
+    const { mode, homeStudioId } = await orgMode(a.org_id);
+    a.org_mode = mode;
+    a.home_studio_id = homeStudioId;
+  }
+  if (a.expired_at) a.grace_ends_at = new Date(new Date(a.expired_at).getTime() + config.signup.graceDays * 86400000);
   return publicAccount(a);
 }
 

@@ -4,7 +4,7 @@ import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { config } from './config.js';
 import { pool } from './db/pg.js';
-import { loadUser, blockInactiveOrg } from './middleware/auth.js';
+import { loadUser, blockInactiveOrg, blockExpiredWrites } from './middleware/auth.js';
 import authRoutes from './routes/auth.js';
 import adminRoutes from './routes/admin.js';
 import orgRoutes from './routes/orgs.js';
@@ -13,6 +13,7 @@ import eventRoutes from './routes/events.js';
 import portalRoutes from './routes/portal.js';
 import publicRoutes from './routes/public.js';
 import billingRoutes, { webhook } from './routes/billing.js';
+import signupRoutes from './routes/signup.js';
 
 export function createApp() {
   const app = express();
@@ -39,12 +40,14 @@ export function createApp() {
   app.use(express.json({ limit: '1mb' }));
   app.use(loadUser);
   app.use(blockInactiveOrg);
+  app.use(blockExpiredWrites);
 
   app.get('/api/health', async (_req, res) => {
     await pool.query('SELECT 1');
     res.json({ ok: true });
   });
   app.use('/api/auth', authRoutes);
+  app.use('/api/signup', signupRoutes);
   app.use('/api/admin', adminRoutes);
   app.use('/api/org', orgRoutes);
   app.use('/api/studios', studioRoutes);

@@ -12,6 +12,7 @@ import { config } from '../config.js';
 import { parse, tempPassword, hashPassword, HttpError, publicAccount } from '../util.js';
 import { notify, studioBrand } from '../services/notify.js';
 import { inviteMessage, passwordResetMessage } from '../services/messages.js';
+import { studioChecklist } from '../services/onboarding.js';
 
 const r = Router();
 r.use(requireRole(...STUDIO_MANAGERS));
@@ -32,6 +33,13 @@ r.get('/:id', async (req, res) => {
   if (!studio) return;
   const plan = await one('SELECT p.* FROM plans p JOIN organizations o ON o.plan_id = p.id WHERE o.id = $1', [studio.org_id]);
   res.json({ ...studio, plan, cnameTarget: config.sitesCnameTarget });
+});
+
+// Getting-started checklist for this studio.
+r.get('/:id/onboarding', async (req, res) => {
+  const studio = await studioGuard(req, res, req.params.id);
+  if (!studio) return;
+  res.json(await studioChecklist(studio, req.user));
 });
 
 // ---------- Website ----------

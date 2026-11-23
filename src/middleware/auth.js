@@ -61,6 +61,18 @@ export function blockInactiveOrg(req, res, next) {
   res.status(403).json({ error: ORG_BLOCKED_MESSAGE[u.org_status], code: 'ORG_BLOCKED', orgStatus: u.org_status });
 }
 
+/**
+ * Trial over and no plan yet: the studio side is read-only (uploads, new events, edits are paused) except billing,
+ * so they can still pay. Clients keep browsing and downloading during the grace period.
+ */
+export function blockExpiredWrites(req, res, next) {
+  const u = req.user;
+  if (!u || u.org_status !== 'expired' || !['org_admin', 'studio_admin', 'staff'].includes(u.role)) return next();
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+  if (req.path.startsWith('/api/billing') || req.path.startsWith('/api/auth')) return next();
+  res.status(403).json({ error: 'Your free trial has ended. Choose a plan to continue making changes.', code: 'TRIAL_EXPIRED' });
+}
+
 export function requireAuth(req, res, next) {
   if (!req.user) return res.status(401).json({ error: 'Not logged in' });
   next();

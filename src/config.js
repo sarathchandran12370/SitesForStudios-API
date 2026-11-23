@@ -7,12 +7,16 @@ function required(name, fallback) {
 }
 
 const isProd = env.NODE_ENV === 'production';
+const isTest = env.NODE_ENV === 'test';
 if (isProd && (env.JWT_SECRET?.startsWith('dev-') || env.MEDIA_SIGNING_SECRET?.startsWith('dev-'))) {
   throw new Error('Set real JWT_SECRET and MEDIA_SIGNING_SECRET in production');
 }
 
 export const config = {
   isProd,
+  isTest,
+  // Rate limits are relaxed in automated tests only.
+  rateLimitScale: isTest ? 100 : 1,
   port: Number(env.PORT || 4000),
   appUrl: env.APP_URL || 'http://localhost:5173',
   sitesCnameTarget: env.SITES_CNAME_TARGET || 'sites.sitesforstudios.com',
@@ -52,9 +56,26 @@ export const config = {
     restoreExtendsMonths: Number(env.RESTORE_EXTENDS_MONTHS || 6),
     restorePriceInr: Number(env.RESTORE_PRICE_INR || 499),
   },
+  signup: {
+    enabled: env.SIGNUP_ENABLED !== 'false',
+    trialDays: Number(env.TRIAL_DAYS || 14),
+    graceDays: Number(env.TRIAL_GRACE_DAYS || 14), // after the trial ends, websites/galleries stay up this long
+  },
   razorpay: {
     keyId: env.RAZORPAY_KEY_ID || '',
     keySecret: env.RAZORPAY_KEY_SECRET || '',
     webhookSecret: env.RAZORPAY_WEBHOOK_SECRET || '',
+    apiBase: env.RAZORPAY_API_BASE || 'https://api.razorpay.com/v1', // tests point this at a fake server
+  },
+  // Seller details printed on invoices. GST is charged only when SELLER_GSTIN is set.
+  billing: {
+    sellerName: env.SELLER_NAME || 'SitesForStudios',
+    sellerGstin: (env.SELLER_GSTIN || '').toUpperCase(),
+    sellerAddress: env.SELLER_ADDRESS || '',
+    sellerStateCode: env.SELLER_STATE_CODE || (env.SELLER_GSTIN ? env.SELLER_GSTIN.slice(0, 2) : '32'),
+    sellerEmail: env.SELLER_EMAIL || '',
+    sac: env.GST_SAC || '997331', // confirm the SAC code with your CA
+    gstRatePercent: Number(env.GST_RATE_PERCENT || 18),
+    invoicePrefix: env.INVOICE_PREFIX || 'SFS',
   },
 };
