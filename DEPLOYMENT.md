@@ -48,13 +48,13 @@ It pulls both repos, installs dependencies, runs database migrations, builds the
 
 ## Web app on S3 + CloudFront
 
-Target layout for the test environment: users open **`https://app.thaaram.in`** (CloudFront). CloudFront serves the web app from S3 and forwards `/api/*` to the EC2 (`api.thaaram.in`, port 80, which only CloudFront may reach). HTTPS is handled by CloudFront, so the EC2 needs no certificate.
+Target layout for the test environment: users open **`https://app.thaaram.in`** (CloudFront). CloudFront serves the web app from S3 and forwards `/api/*` to the EC2 at `https://api.thaaram.in` (Let's Encrypt certificate on the EC2, renewed automatically over port 80).
 
 1. **AWS (console):**
    - S3 bucket for the web app (private, no website hosting).
    - ACM certificate for `app.thaaram.in` in **us-east-1** (DNS validation in GoDaddy).
-   - CloudFront distribution: origin 1 = the S3 bucket (Origin Access Control); origin 2 = `api.thaaram.in`, **HTTP only, port 80**. Default behaviour → S3 with the SPA rewrite function; behaviour `/api/*` → EC2, all methods, cache policy *CachingDisabled*, origin request policy *AllViewerExceptHostHeader*. Alternate domain `app.thaaram.in` with the certificate.
-   - EC2 security group: inbound **HTTP 80 from the managed prefix list `com.amazonaws.global.cloudfront.origin-facing`** (CloudFront only).
+   - CloudFront distribution: origin 1 = the S3 bucket (Origin Access Control); origin 2 = `api.thaaram.in`, **HTTPS only, port 443**. Default behaviour → S3 with the SPA rewrite function; behaviour `/api/*` → EC2, all methods, cache policy *CachingDisabled*, origin request policy *AllViewerExceptHostHeader*. Alternate domain `app.thaaram.in` with the certificate.
+   - EC2 security group: inbound HTTP 80 and HTTPS 443 from anywhere (80 is needed for Let's Encrypt renewals; it only redirects to HTTPS).
    - IAM OIDC role for GitHub (repo `SitesForStudios-UI`, environment `production`) allowed to sync the bucket and invalidate the distribution.
 2. **DNS (GoDaddy):** `app` CNAME → the distribution's `dxxxx.cloudfront.net`.
 3. **GitHub (SitesForStudios-UI → Settings):** environment `production`; variables `AWS_DEPLOY_ROLE_ARN`, `UI_BUCKET`, `CLOUDFRONT_DISTRIBUTION_ID` (optional `APP_HOSTS`, default `app.thaaram.in`). Pushes to `main` then deploy the web app.
@@ -65,7 +65,7 @@ Target layout for the test environment: users open **`https://app.thaaram.in`** 
    ```bash
    ssh $thaaral 'bash ~/apps/sitesforstudios/server/deploy/ec2/deploy.sh'
    ```
-   nginx then only serves `/api` (other paths redirect to the app), `APP_URL` becomes `https://app.thaaram.in`, and the API trusts CloudFront + nginx for client IPs.
+   nginx then only serves `/api` over HTTPS (other paths redirect to the app; the certificate is kept), `APP_URL` becomes `https://app.thaaram.in`, and the API trusts CloudFront + nginx for client IPs.
 
 ## Later
 
