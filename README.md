@@ -127,7 +127,7 @@ src/
 
 ## Deployment
 
-Pushes to `main` deploy to AWS Mumbai through GitHub Actions (`.github/workflows/deploy.yml`). The one-time AWS setup for both repos is in [DEPLOYMENT.md](DEPLOYMENT.md), using the CloudFormation template in [deploy/cloudformation.yml](deploy/cloudformation.yml).
+The test environment runs on an EC2 server at `https://api.thaaram.in` (web app + API behind nginx, API under PM2). Setup and the one-line deploy command are in [DEPLOYMENT.md](DEPLOYMENT.md); scripts are in [deploy/ec2/](deploy/ec2/). GitHub Actions (`.github/workflows/ci.yml`) runs the tests on every push.
 
 ## Production checklist
 

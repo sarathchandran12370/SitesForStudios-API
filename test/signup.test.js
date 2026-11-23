@@ -10,7 +10,7 @@ const lastCode = async (email) => {
   const row = await ctx.db.one(`SELECT subject FROM notifications WHERE kind = 'signup_code' AND recipient = $1 ORDER BY created_at DESC LIMIT 1`, [email]);
   return row.subject.slice(0, 6);
 };
-const studioSignup = (over = {}) => ({ type: 'studio', studioName: 'Lens & Light', name: 'Meera Nair', email: 'meera@test.local', phone: '9811122233', password: 'Strong!pass1', planId: 'pro', ...over });
+const studioSignup = (over = {}) => ({ type: 'studio', studioName: 'Lens & Light', name: 'Meera Nair', email: 'meera@test.local', phone: '9811122233', password: 'Strong!pass1', planId: 'pro', acceptTerms: true, ...over });
 
 describe('self sign-up', () => {
   it('lists the trial length and plans', async () => {
@@ -23,6 +23,9 @@ describe('self sign-up', () => {
   it('validates the details and refuses an email that already has an account', async () => {
     const c = client();
     assert.equal((await c.post('/api/signup/start', studioSignup({ password: 'short' }))).status, 400);
+    const noConsent = await c.post('/api/signup/start', studioSignup({ acceptTerms: false }));
+    assert.equal(noConsent.status, 400, 'terms must be accepted');
+    assert.match(noConsent.body.error, /Terms of Service/);
     assert.equal((await c.post('/api/signup/start', studioSignup({ planId: 'organization' }))).status, 400, 'Organization plan needs the organization flow');
     assert.equal((await c.post('/api/signup/start', studioSignup({ email: 'studio@test.local' }))).status, 409);
     assert.equal((await c.post('/api/signup/start', { ...studioSignup(), type: 'organization', planId: 'organization' })).status, 400, 'organization name required');
@@ -79,6 +82,9 @@ describe('self sign-up', () => {
     assert.ok(days > 13.9 && days < 14.1);
     const studio = await ctx.db.one('SELECT * FROM studios WHERE id = $1', [v.body.studioId]);
     assert.equal(studio.slug, 'test-studio-2', 'gets a free web address when the name is taken');
+    const acct = await ctx.db.one(`SELECT terms_version, terms_accepted_at FROM accounts WHERE email = 'meera@test.local'`);
+    assert.equal(acct.terms_version, me.terms_current_version, 'consent from the sign-up checkbox is recorded');
+    assert.ok(acct.terms_accepted_at);
     const org = await ctx.db.one('SELECT * FROM organizations WHERE id = $1', [v.body.orgId]);
     assert.equal(org.signup_source, 'self');
     assert.equal(org.name, 'Test Studio');
@@ -99,7 +105,7 @@ describe('self sign-up', () => {
 
   it('an organization sign-up starts in multi mode on the Organization plan', async () => {
     const c = client();
-    const r = await c.post('/api/signup/start', { type: 'organization', orgName: 'Big Day Group', studioName: 'Big Day Kochi', name: 'Ravi', email: 'ravi@test.local', phone: '9822233344', password: 'Strong!pass1', planId: 'organization' });
+    const r = await c.post('/api/signup/start', { type: 'organization', orgName: 'Big Day Group', studioName: 'Big Day Kochi', name: 'Ravi', email: 'ravi@test.local', phone: '9822233344', password: 'Strong!pass1', planId: 'organization', acceptTerms: true });
     await c.post('/api/signup/verify', { requestId: r.body.requestId, code: await lastCode('ravi@test.local') });
     const me = (await c.get('/api/auth/me')).body.user;
     assert.equal(me.org_mode, 'multi');

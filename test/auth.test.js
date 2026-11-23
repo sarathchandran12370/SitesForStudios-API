@@ -46,6 +46,17 @@ describe('auth', () => {
     assert.equal((await c.post('/api/auth/change-password', { currentPassword: 'wrong-one', newPassword: 'Brand!New2026' })).status, 400);
   });
 
+  it('records acceptance of the current terms, and only the current version', async () => {
+    const c = await as('couple@test.local');
+    const me = (await c.get('/api/auth/me')).body.user;
+    assert.ok(me.terms_current_version);
+    assert.equal(me.terms_version, null, 'accounts created by a studio have not accepted yet');
+    assert.equal((await c.post('/api/auth/accept-terms', { version: '1999-01-01' })).status, 409);
+    assert.equal((await c.post('/api/auth/accept-terms', { version: me.terms_current_version })).status, 200);
+    assert.equal((await c.get('/api/auth/me')).body.user.terms_version, me.terms_current_version);
+    assert.equal((await client().post('/api/auth/accept-terms', { version: me.terms_current_version })).status, 401);
+  });
+
   it('logs out', async () => {
     const c = await as('guest@test.local');
     await c.post('/api/auth/logout');

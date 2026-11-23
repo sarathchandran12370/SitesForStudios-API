@@ -50,6 +50,7 @@ const startSchema = z.object({
   password: z.string().min(8, 'must be at least 8 characters').max(128),
   planId: z.enum(['starter', 'pro', 'organization']),
   website: z.string().max(0).optional(), // honeypot
+  acceptTerms: z.literal(true, { message: 'please accept the Terms of Service and Privacy Policy' }),
 });
 
 r.post('/start', startLimiter, async (req, res) => {
@@ -70,6 +71,7 @@ r.post('/start', startLimiter, async (req, res) => {
     phone: b.phone,
     planId: b.planId,
     passwordHash: await hashPassword(b.password),
+    termsVersion: config.termsVersion,
   };
   const row = await one(
     `INSERT INTO signup_requests(email, data, code_hash, expires_at) VALUES ($1, $2, 'pending', now() + make_interval(mins => $3)) RETURNING id`,
@@ -114,6 +116,8 @@ r.post('/verify', verifyLimiter, async (req, res) => {
     owner: { name: d.name, email: reqRow.email, phone: d.phone, passwordHash: d.passwordHash },
     source: 'self',
   });
+  // Consent was given at sign-up (the checkbox); record which version and when.
+  await q('UPDATE accounts SET terms_version = $2, terms_accepted_at = now() WHERE id = $1', [account.id, d.termsVersion || config.termsVersion]);
   await q('DELETE FROM signup_requests WHERE id = $1', [requestId]);
   issueSession(res, account);
   res.status(201).json({ user: publicAccount(account), orgId: org.id, studioId: studio.id, trialEndsAt: org.trial_ends_at });

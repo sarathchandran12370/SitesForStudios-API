@@ -53,6 +53,14 @@ r.post('/change-password', requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+// Accept the current Terms of Service and Privacy Policy (shown once to anyone who hasn't).
+r.post('/accept-terms', requireAuth, async (req, res) => {
+  const { version } = parse(z.object({ version: z.string() }), req.body);
+  if (version !== config.termsVersion) throw new HttpError(409, 'The terms have changed. Please reload and read the latest version.');
+  await q('UPDATE accounts SET terms_version = $2, terms_accepted_at = now() WHERE id = $1', [req.user.id, version]);
+  res.json({ ok: true, version });
+});
+
 async function meFor(id) {
   const a = await one(
     `SELECT a.*, o.name AS org_name, o.plan_id, o.status AS org_status, o.trial_ends_at, o.expired_at,
@@ -70,6 +78,7 @@ async function meFor(id) {
     a.org_mode = mode;
     a.home_studio_id = homeStudioId;
   }
+  a.terms_current_version = config.termsVersion;
   if (a.expired_at) a.grace_ends_at = new Date(new Date(a.expired_at).getTime() + config.signup.graceDays * 86400000);
   return publicAccount(a);
 }

@@ -56,6 +56,9 @@ export const config = {
     restoreExtendsMonths: Number(env.RESTORE_EXTENDS_MONTHS || 6),
     restorePriceInr: Number(env.RESTORE_PRICE_INR || 499),
   },
+  // Current Terms of Service / Privacy Policy version (web: src/pages/legal/details.js VERSION).
+  // Changing it asks every user to accept again.
+  termsVersion: env.TERMS_VERSION || '2026-11-23',
   signup: {
     enabled: env.SIGNUP_ENABLED !== 'false',
     trialDays: Number(env.TRIAL_DAYS || 14),
