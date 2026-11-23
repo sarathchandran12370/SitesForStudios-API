@@ -23,6 +23,11 @@ describe('website templates', () => {
     assert.equal(site.body.site.theme.fontPair, 'template');
   });
 
+  it('website data is never served stale from the browser cache', async () => {
+    const r = await client().get('/api/sites/test-studio');
+    assert.equal(r.headers.get('cache-control'), 'no-cache');
+  });
+
   it('premium templates need the Pro plan; standard ones work on Starter', async () => {
     await ctx.db.q(`UPDATE organizations SET plan_id = 'starter' WHERE id = $1`, [ctx.fx.org.id]);
     const studio = await as('studio@test.local');

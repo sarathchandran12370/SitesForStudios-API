@@ -55,7 +55,8 @@ r.get('/sites/:slug', async (req, res) => {
     [req.params.slug, BLOCKED_ORG_STATUSES]
   );
   if (!studio) throw new HttpError(404, 'Site not found');
-  res.set('Cache-Control', 'public, max-age=60');
+  // Always revalidate (ETag -> 304 when unchanged) so template and content edits show immediately.
+  res.set('Cache-Control', 'no-cache');
   res.json(await siteData(studio));
 });
 
@@ -68,6 +69,7 @@ r.get('/sites-by-host/:host', async (req, res) => {
     [host, BLOCKED_ORG_STATUSES]
   );
   if (!studio) throw new HttpError(404, 'Site not found');
+  res.set('Cache-Control', 'no-cache');
   res.json(await siteData(studio));
 });
 
