@@ -19,7 +19,8 @@ if (!(await one('SELECT 1 FROM accounts WHERE email = $1', [adminEmail]))) {
     adminEmail,
     await hashPassword(adminPassword),
   ]);
-  console.log(`super admin: ${adminEmail} / ${adminPassword}`);
+  // Never print the password in production (it would end up in deploy logs).
+  console.log(process.env.NODE_ENV === 'production' ? `super admin created: ${adminEmail}` : `super admin: ${adminEmail} / ${adminPassword}`);
 }
 
 if (process.argv.includes('--demo')) await seedDemo();
