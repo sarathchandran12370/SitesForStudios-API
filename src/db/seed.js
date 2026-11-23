@@ -37,7 +37,9 @@ async function seedDemo() {
   }
   const org = await one(`INSERT INTO organizations(name, plan_id, status) VALUES ('Arjun Creative Group','pro','active') RETURNING *`);
   const studio = await one(`INSERT INTO studios(org_id, name, slug, template_id, published_at) VALUES ($1,'Arjun Photography','arjun-photography','editorial', now()) RETURNING *`, [org.id]);
-  const pw = await hashPassword('Demo!2026');
+  // Local development uses the well-known Demo!2026. On a server, set DEMO_PASSWORD to something private.
+  const demoPassword = process.env.DEMO_PASSWORD || 'Demo!2026';
+  const pw = await hashPassword(demoPassword);
   await q(`INSERT INTO accounts(email, name, password_hash, role, org_id, must_change_password) VALUES ('owner@demo.local','Arjun Menon',$1,'org_admin',$2,false)`, [pw, org.id]);
   await q(`INSERT INTO accounts(email, name, password_hash, role, org_id, studio_id, must_change_password) VALUES ('studio@demo.local','Arjun (Studio)',$1,'studio_admin',$2,$3,false)`, [pw, org.id, studio.id]);
   const client = await one(
@@ -107,6 +109,8 @@ async function seedDemo() {
   await storage.put(raw.originalKey, Buffer.alloc(1024 * 64, 7), 'application/octet-stream');
   await processPhoto(raw.id);
 
-  console.log('demo logins (password Demo!2026): owner@demo.local, studio@demo.local, couple@demo.local');
+  console.log(
+    `demo logins${process.env.DEMO_PASSWORD ? '' : ' (password Demo!2026)'}: owner@demo.local, studio@demo.local, couple@demo.local`
+  );
   console.log('demo site: /s/arjun-photography');
 }
