@@ -84,11 +84,17 @@ node --env-file="$ENV_FILE" src/db/migrate.js
 node --env-file="$ENV_FILE" src/db/seed.js
 
 # ---------------------------------------------------------------- web app
-cd "$BASE/web"
-npm ci --no-audit --no-fund --loglevel=error
-VITE_APP_HOSTS="$DOMAIN" npx vite build --logLevel warn
-rsync -a --delete dist/ "$WEB_ROOT/" 2>/dev/null || { rm -rf "${WEB_ROOT:?}"/*; cp -r dist/. "$WEB_ROOT/"; }
-echo "==> Web app published to $WEB_ROOT"
+# WEB_HOSTING=s3 (set by use-cloudfront.sh): the web app is deployed to S3 + CloudFront by GitHub Actions.
+WEB_HOSTING="$(grep -E '^WEB_HOSTING=' "$ENV_FILE" | cut -d= -f2 || true)"
+if [ "${WEB_HOSTING:-ec2}" = "s3" ]; then
+  echo "==> Web app is on S3 + CloudFront (GitHub Actions deploys it); skipping it here"
+else
+  cd "$BASE/web"
+  npm ci --no-audit --no-fund --loglevel=error
+  VITE_APP_HOSTS="$DOMAIN" npx vite build --logLevel warn
+  rsync -a --delete dist/ "$WEB_ROOT/" 2>/dev/null || { rm -rf "${WEB_ROOT:?}"/*; cp -r dist/. "$WEB_ROOT/"; }
+  echo "==> Web app published to $WEB_ROOT"
+fi
 
 # ---------------------------------------------------------------- start / restart in PM2
 cd "$BASE/server"

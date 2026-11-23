@@ -19,6 +19,8 @@ export const config = {
   rateLimitScale: isTest ? 100 : 1,
   port: Number(env.PORT || 4000),
   appUrl: env.APP_URL || 'http://localhost:5173',
+  // Proxies in front of the API: 1 = nginx only; 2 = CloudFront -> nginx. Needed for real client IPs (rate limits).
+  trustProxyHops: Number(env.TRUST_PROXY_HOPS || 1),
   sitesCnameTarget: env.SITES_CNAME_TARGET || 'sites.sitesforstudios.com',
   databaseUrl: required('DATABASE_URL', 'postgres://localhost:5432/sitesforstudios'),
   mongoUrl: required('MONGO_URL', 'mongodb://127.0.0.1:27017/sitesforstudios'),

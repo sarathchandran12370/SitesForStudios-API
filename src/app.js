@@ -17,7 +17,7 @@ import signupRoutes from './routes/signup.js';
 
 export function createApp() {
   const app = express();
-  app.set('trust proxy', 1);
+  app.set('trust proxy', config.trustProxyHops);
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'same-site' }, contentSecurityPolicy: false }));
 
   // In production the API is only reachable through CloudFront, which adds a secret header.
