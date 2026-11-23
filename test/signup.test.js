@@ -17,7 +17,7 @@ describe('self sign-up', () => {
     const r = await client().get('/api/signup/options');
     assert.equal(r.body.enabled, true);
     assert.equal(r.body.trialDays, 14);
-    assert.equal(r.body.plans.length, 3);
+    assert.equal(r.body.plans.length, 4);
   });
 
   it('validates the details and refuses an email that already has an account', async () => {

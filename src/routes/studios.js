@@ -208,6 +208,8 @@ r.post('/:id/accounts', async (req, res) => {
     }),
     req.body
   );
+  const accountPlan = await one('SELECT p.* FROM plans p JOIN organizations o ON o.plan_id = p.id WHERE o.id = $1', [studio.org_id]);
+  if (body.role === 'client' && !accountPlan.client_galleries) throw new HttpError(402, 'Client galleries are not included in the Website plan. Upgrade to Starter or above to add clients.');
   if (body.role === 'staff') {
     if (!['super_admin', 'org_admin', 'studio_admin'].includes(req.user.role)) throw new HttpError(403, 'Only studio admins can add staff');
     const plan = await one('SELECT p.staff_seats FROM plans p JOIN organizations o ON o.plan_id = p.id WHERE o.id = $1', [studio.org_id]);

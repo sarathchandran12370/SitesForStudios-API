@@ -49,6 +49,12 @@ r.post('/studio/:studioId', async (req, res) => {
   const b = parse(eventFields, req.body);
   const plan = await one('SELECT p.* FROM plans p JOIN organizations o ON o.plan_id = p.id WHERE o.id = $1', [studio.org_id]);
   if (b.rawEnabled && !plan.raw_delivery) throw new HttpError(402, 'RAW delivery needs the Pro plan or higher');
+  if (!plan.client_galleries) {
+    // Website plan: events are portfolio albums (no client delivery, RAW or face recognition).
+    b.rawEnabled = false;
+    b.faceEnabled = false;
+    if (b.showInPortfolio === undefined) b.showInPortfolio = true;
+  }
   const ev = await one(
     `INSERT INTO events(studio_id, title, event_date, venue, raw_enabled, face_enabled, show_in_portfolio, expires_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7, now() + make_interval(months => $8)) RETURNING *`,
@@ -76,9 +82,10 @@ r.patch('/:id', async (req, res) => {
   const g = await eventGuard(req, res, req.params.id);
   if (!g) return;
   const b = parse(eventFields.partial().extend({ coverPhotoId: z.string().nullable().optional() }), req.body);
-  if (b.rawEnabled) {
+  if (b.rawEnabled || b.faceEnabled) {
     const plan = await one('SELECT p.* FROM plans p JOIN organizations o ON o.plan_id = p.id WHERE o.id = $1', [g.studio.org_id]);
-    if (!plan.raw_delivery) throw new HttpError(402, 'RAW delivery needs the Pro plan or higher');
+    if (b.rawEnabled && !plan.raw_delivery) throw new HttpError(402, 'RAW delivery needs the Pro plan or higher');
+    if (b.faceEnabled && !plan.client_galleries) throw new HttpError(402, 'Face recognition is not included in the Website plan');
   }
   const ev = await one(
     `UPDATE events SET
@@ -184,6 +191,8 @@ r.post('/:id/notify-clients', async (req, res) => {
   const g = await eventGuard(req, res, req.params.id);
   if (!g) return;
   if (g.event.status !== 'active') throw new HttpError(400, 'This event is archived');
+  const notifyPlan = await one('SELECT p.client_galleries FROM plans p JOIN organizations o ON o.plan_id = p.id WHERE o.id = $1', [g.studio.org_id]);
+  if (!notifyPlan.client_galleries) throw new HttpError(402, 'Client galleries are not included in the Website plan. Upgrade to Starter or above to add clients.');
   const clients = await q(
     `SELECT a.id, a.name, a.email, a.phone FROM event_access ea JOIN accounts a ON a.id = ea.account_id WHERE ea.event_id = $1`,
     [g.event.id]

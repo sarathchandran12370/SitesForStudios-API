@@ -36,7 +36,7 @@ async function sendCode(request, code) {
 }
 
 r.get('/options', async (_req, res) => {
-  const plans = await q('SELECT id, name, price_monthly_inr, max_studios, storage_gb FROM plans ORDER BY price_monthly_inr');
+  const plans = await q('SELECT id, name, price_monthly_inr, max_studios, storage_gb, client_galleries FROM plans ORDER BY price_monthly_inr');
   res.json({ enabled: config.signup.enabled, trialDays: config.signup.trialDays, plans });
 });
 
@@ -48,7 +48,7 @@ const startSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
   phone: z.string().trim().min(6).max(20),
   password: z.string().min(8, 'must be at least 8 characters').max(128),
-  planId: z.enum(['starter', 'pro', 'organization']),
+  planId: z.enum(['website', 'starter', 'pro', 'organization']),
   website: z.string().max(0).optional(), // honeypot
   acceptTerms: z.literal(true, { message: 'please accept the Terms of Service and Privacy Policy' }),
 });

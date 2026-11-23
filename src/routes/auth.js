@@ -64,6 +64,7 @@ r.post('/accept-terms', requireAuth, async (req, res) => {
 async function meFor(id) {
   const a = await one(
     `SELECT a.*, o.name AS org_name, o.plan_id, o.status AS org_status, o.trial_ends_at, o.expired_at,
+            (SELECT client_galleries FROM plans WHERE id = o.plan_id) AS client_galleries,
             s.name AS studio_name, s.slug AS studio_slug
      FROM accounts a
      LEFT JOIN organizations o ON o.id = a.org_id

@@ -48,7 +48,7 @@ export async function planForRazorpayPlan(rzpPlanId) {
   return { plan, cycle: plan.razorpay_plan_id_yearly === rzpPlanId ? 'yearly' : 'monthly' };
 }
 
-const PLAN_RANK = { starter: 1, pro: 2, organization: 3 };
+const PLAN_RANK = { website: 0, starter: 1, pro: 2, organization: 3 };
 export const isUpgrade = (fromPlan, toPlan) => (PLAN_RANK[toPlan] || 0) > (PLAN_RANK[fromPlan] || 0);
 
 async function nextInvoiceNumber(client, date) {

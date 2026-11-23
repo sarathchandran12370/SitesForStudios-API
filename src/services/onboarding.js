@@ -68,7 +68,7 @@ export async function orgMode(orgId) {
 
 /** Getting-started steps for a studio (plus organization steps when the user owns the organization). */
 export async function studioChecklist(studio, user) {
-  const [site, counts, org, profile] = await Promise.all([
+  const [site, counts, org, profile, plan] = await Promise.all([
     SiteConfig.findOne({ studioId: studio.id }, { createdAt: 1, updatedAt: 1 }).lean(),
     one(
       `SELECT (SELECT count(*) FROM events WHERE studio_id = $1)::int AS events,
@@ -78,16 +78,25 @@ export async function studioChecklist(studio, user) {
     ),
     one('SELECT status FROM organizations WHERE id = $1', [studio.org_id]),
     one('SELECT 1 AS ok FROM billing_profiles WHERE org_id = $1', [studio.org_id]),
+    one('SELECT p.client_galleries FROM plans p JOIN organizations o ON o.plan_id = p.id WHERE o.id = $1', [studio.org_id]),
   ]);
+  const galleries = plan?.client_galleries !== false;
   const photos = await Photo.countDocuments({ studioId: studio.id, status: 'ready' });
   const base = `/studio/${studio.id}`;
   const steps = [
     { id: 'website', label: 'Customise your website: template, logo, colours, contact details', done: !!site && site.updatedAt > site.createdAt, to: `${base}/website` },
     { id: 'publish', label: 'Publish your website', done: !!studio.published_at, to: `${base}/website` },
-    { id: 'event', label: 'Create your first event', done: counts.events > 0, to: `${base}/events` },
-    { id: 'photos', label: 'Upload photos to an event', done: photos > 0, to: `${base}/events` },
-    { id: 'client', label: 'Add the couple as a client', done: counts.clients > 0, to: `${base}/clients` },
-    { id: 'notify', label: 'Tell your clients their photos are ready', done: counts.notified > 0, to: `${base}/events` },
+    ...(galleries
+      ? [
+          { id: 'event', label: 'Create your first event', done: counts.events > 0, to: `${base}/events` },
+          { id: 'photos', label: 'Upload photos to an event', done: photos > 0, to: `${base}/events` },
+          { id: 'client', label: 'Add the couple as a client', done: counts.clients > 0, to: `${base}/clients` },
+          { id: 'notify', label: 'Tell your clients their photos are ready', done: counts.notified > 0, to: `${base}/events` },
+        ]
+      : [
+          { id: 'event', label: 'Create your first portfolio album', done: counts.events > 0, to: `${base}/events` },
+          { id: 'photos', label: 'Upload photos and mark highlights for your portfolio', done: photos > 0, to: `${base}/events` },
+        ]),
     { id: 'domain', label: 'Connect your own domain (optional)', done: ['verified', 'live'].includes(studio.domain_status), to: `${base}/domain`, optional: true },
   ];
   if (user.role === 'org_admin' || user.role === 'super_admin') {

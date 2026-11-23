@@ -20,6 +20,8 @@ async function access(req, eventId) {
   const event = await one('SELECT e.*, s.name AS studio_name, s.org_id FROM events e JOIN studios s ON s.id = e.studio_id WHERE e.id = $1', [eventId]);
   if (!event) throw new HttpError(404, 'Event not found');
   if (req.user.role === 'client') {
+    const plan = await one('SELECT p.client_galleries FROM plans p JOIN organizations o ON o.plan_id = p.id WHERE o.id = $1', [event.org_id]);
+    if (!plan.client_galleries) throw new HttpError(403, `Online galleries are not available from ${event.studio_name} right now. Please contact your photographer.`);
     const a = await one('SELECT access_level FROM event_access WHERE event_id = $1 AND account_id = $2', [eventId, req.user.id]);
     if (!a) throw new HttpError(404, 'Event not found');
     if (event.status !== 'active') {

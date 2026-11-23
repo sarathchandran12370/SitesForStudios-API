@@ -40,6 +40,7 @@ r.put('/plans/:id', async (req, res) => {
       raw_delivery: z.boolean(),
       premium_templates: z.boolean(),
       retention_months: z.number().int().min(1).max(120),
+      client_galleries: z.boolean().default(true),
       razorpay_plan_id: z.string().max(60).optional().nullable(),
       razorpay_plan_id_yearly: z.string().max(60).optional().nullable(),
     }),
@@ -48,12 +49,12 @@ r.put('/plans/:id', async (req, res) => {
   const row = await one(
     `UPDATE plans SET name=$2, price_monthly_inr=$3, price_yearly_inr=$4, storage_gb=$5, max_studios=$6,
        face_events_per_month=$7, staff_seats=$8, raw_delivery=$9, premium_templates=$10, retention_months=$11,
-       razorpay_plan_id=$12, razorpay_plan_id_yearly=$13
+       razorpay_plan_id=$12, razorpay_plan_id_yearly=$13, client_galleries=$14
      WHERE id=$1 RETURNING *`,
     [
       req.params.id, body.name, body.price_monthly_inr, body.price_yearly_inr, body.storage_gb, body.max_studios,
       body.face_events_per_month, body.staff_seats, body.raw_delivery, body.premium_templates, body.retention_months,
-      body.razorpay_plan_id || null, body.razorpay_plan_id_yearly || null,
+      body.razorpay_plan_id || null, body.razorpay_plan_id_yearly || null, body.client_galleries,
     ]
   );
   if (!row) throw new HttpError(404, 'Plan not found');
@@ -76,7 +77,7 @@ r.post('/orgs', async (req, res) => {
   const body = parse(
     z.object({
       name: z.string().min(2).max(120),
-      planId: z.enum(['starter', 'pro', 'organization']),
+      planId: z.enum(['website', 'starter', 'pro', 'organization']),
       ownerName: z.string().min(2).max(120),
       ownerEmail: z.string().email(),
       ownerPhone: z.string().max(20).optional(),
@@ -110,7 +111,7 @@ r.post('/orgs', async (req, res) => {
 r.patch('/orgs/:id', async (req, res) => {
   const body = parse(
     z.object({
-      planId: z.enum(['starter', 'pro', 'organization']).optional(),
+      planId: z.enum(['website', 'starter', 'pro', 'organization']).optional(),
       status: z.enum(['trial', 'active', 'past_due', 'expired', 'suspended', 'cancelled']).optional(),
       name: z.string().min(2).max(120).optional(),
       extendTrialDays: z.number().int().min(1).max(90).optional(),
