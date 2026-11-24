@@ -11,6 +11,7 @@ import { storage } from '../services/storage.js';
 import { searchBySelfie, facesEnabled } from '../services/faces.js';
 import { parse, HttpError } from '../util.js';
 import { photoView } from './photoView.js';
+import { present } from '../services/clientInvoices.js';
 
 const r = Router();
 r.use(requireAuth);
@@ -32,6 +33,22 @@ async function access(req, eventId) {
   if (canManageStudio(req.user, { id: event.studio_id, org_id: event.org_id })) return { event, level: 'primary' };
   throw new HttpError(404, 'Event not found');
 }
+
+// Invoices the studio has sent to this client (drafts are never shown).
+r.get('/invoices', async (req, res) => {
+  const rows = await q(
+    `SELECT i.*, e.title AS event_title, e.event_date, s.name AS studio_name
+     FROM client_invoices i JOIN studios s ON s.id = i.studio_id LEFT JOIN events e ON e.id = i.event_id
+     WHERE i.client_account_id = $1 AND i.status <> 'draft' ORDER BY i.issue_date DESC, i.created_at DESC`,
+    [req.user.id]
+  );
+  res.json(
+    rows.map((row) => {
+      const i = present(row);
+      return { id: i.id, number: i.number, status: i.status, issue_date: i.issue_date, due_date: i.due_date, total_paise: i.total_paise, paid_paise: i.paid_paise, balance_paise: i.balance_paise, overdue: i.overdue, event_title: i.event_title, studio_name: row.studio_name, view_url: i.view_url };
+    })
+  );
+});
 
 r.get('/events', async (req, res) => {
   const rows = await q(

@@ -124,3 +124,40 @@ export function restoredMessage({ brand, name, event, forStudio }) {
     whatsapp: { template: 'photosReady', params: [name, event.title, brand.name, url], preview: `Restored: ${event.title}` },
   };
 }
+
+const rupees = (paise) => `₹${(Number(paise) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/** Invoice from a studio to its client, with the private link to view and print it. */
+export function invoiceMessage({ brand, invoice, url, reminder = false }) {
+  const name = invoice.customer?.name || '';
+  const balance = Number(invoice.total_paise) - Number(invoice.paid_paise || 0);
+  const title = reminder ? `Payment reminder: invoice ${invoice.number}` : `Invoice ${invoice.number}`;
+  const paragraphs = [
+    `Hi ${esc(name.split(' ')[0])},`,
+    reminder
+      ? `This is a reminder that <b>${rupees(balance)}</b> is due on invoice <b>${esc(invoice.number)}</b> from ${esc(brand.name)}${invoice.due_date ? `, due by ${fmtDate(invoice.due_date)}` : ''}.`
+      : `${esc(brand.name)} has sent you invoice <b>${esc(invoice.number)}</b> for <b>${rupees(invoice.total_paise)}</b>${invoice.due_date ? `, due by ${fmtDate(invoice.due_date)}` : ''}.`,
+    'Open the invoice to see the details and payment options. You can save it as a PDF from there.',
+  ];
+  const cta = { label: 'View invoice', url };
+  const footnote = `Questions about this invoice? Reply to ${esc(brand.name)}${brand.contact?.email ? ` at ${esc(brand.contact.email)}` : ''}.`;
+  return {
+    email: { subject: `${reminder ? 'Reminder: ' : ''}Invoice ${invoice.number} from ${brand.name}`, html: layout({ brand, title, paragraphs, cta, footnote }), text: text(title, paragraphs, cta, footnote) },
+  };
+}
+
+/** Receipt after the studio records a payment. */
+export function paymentReceivedMessage({ brand, invoice, payment, url }) {
+  const name = invoice.customer?.name || '';
+  const balance = Number(invoice.total_paise) - Number(invoice.paid_paise);
+  const title = 'Payment received';
+  const paragraphs = [
+    `Hi ${esc(name.split(' ')[0])},`,
+    `${esc(brand.name)} has received your payment of <b>${rupees(payment.amount_paise)}</b> for invoice <b>${esc(invoice.number)}</b>. Thank you!`,
+    balance > 0 ? `Balance still due: <b>${rupees(balance)}</b>.` : 'This invoice is now fully paid.',
+  ];
+  const cta = { label: 'View invoice', url };
+  return {
+    email: { subject: `Payment received for invoice ${invoice.number}`, html: layout({ brand, title, paragraphs, cta }), text: text(title, paragraphs, cta) },
+  };
+}

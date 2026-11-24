@@ -1,4 +1,4 @@
-// Public: studio websites (by slug or custom domain), enquiry form, signed media and local uploads.
+// Public: studio websites (by slug or custom domain), enquiry form, client invoice links, signed media and local uploads.
 import { Router } from 'express';
 import express from 'express';
 import rateLimit from 'express-rate-limit';
@@ -11,6 +11,8 @@ import { parse, HttpError } from '../util.js';
 import { BLOCKED_ORG_STATUSES } from '../middleware/auth.js';
 import { notify, studioBrand, studioRecipients } from '../services/notify.js';
 import { enquiryMessage } from '../services/messages.js';
+import { present, paymentsFor } from '../services/clientInvoices.js';
+import { renderClientInvoiceHtml } from '../services/clientInvoiceHtml.js';
 
 const r = Router();
 
@@ -114,6 +116,22 @@ r.post('/sites/:slug/enquiries', enquiryLimiter, express.json({ limit: '32kb' })
     to.whatsapp ? notify({ orgId: studio.org_id, kind: 'enquiry', whatsapp: { to: to.whatsapp, ...msg.whatsapp } }) : null,
   ]);
   res.status(201).json({ ok: true, dateAvailable });
+});
+
+// ---------- Client invoice link (sent by the studio by email; the long random token is the access check) ----------
+
+const invoiceLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 120, standardHeaders: 'draft-7', legacyHeaders: false });
+
+r.get('/invoice-view/:token', invoiceLimiter, async (req, res) => {
+  const inv = await one(
+    `SELECT i.*, e.title AS event_title, e.event_date FROM client_invoices i LEFT JOIN events e ON e.id = i.event_id
+     WHERE i.view_token = $1 AND i.status <> 'draft'`,
+    [String(req.params.token)]
+  );
+  res.set({ 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex', 'Referrer-Policy': 'no-referrer' });
+  if (!inv) return res.status(404).type('html').send('<!doctype html><meta charset="utf-8"><title>Invoice not found</title><p style="font-family:Arial;padding:24px">This invoice link is not valid. Please ask your photographer for a new link.</p>');
+  const brand = await studioBrand(inv.studio_id);
+  res.type('html').send(renderClientInvoiceHtml({ inv: present(inv), seller: inv.seller, payments: await paymentsFor(inv.id), accent: brand?.accent }));
 });
 
 // ---------- Local storage endpoints (dev only; S3 serves these in production) ----------
