@@ -117,6 +117,7 @@ r.get('/studio/:studioId', async (req, res) => {
 const invoiceSchema = z.object({
   clientAccountId: z.string().uuid().optional().nullable(),
   eventId: z.string().uuid().optional().nullable(),
+  bookingId: z.string().uuid().optional().nullable(),
   customer: z.object({
     name: z.string().min(1, 'enter who the invoice is for').max(120),
     email: optional(z.string().email()),
@@ -152,6 +153,9 @@ async function buildInvoice(studio, body) {
   if (body.eventId && !(await one('SELECT id FROM events WHERE id = $1 AND studio_id = $2', [body.eventId, studio.id]))) {
     throw new HttpError(400, 'That event is not in this studio');
   }
+  if (body.bookingId && !(await one('SELECT id FROM bookings WHERE id = $1 AND studio_id = $2', [body.bookingId, studio.id]))) {
+    throw new HttpError(400, 'That booking is not in this studio');
+  }
   const gstRate = body.gstRate ?? (settings.gstin ? settings.default_gst_rate : 0);
   if (gstRate > 0 && !settings.gstin) throw new HttpError(400, 'Add your GSTIN in invoice settings before charging GST');
   const c = body.customer;
@@ -174,6 +178,7 @@ async function buildInvoice(studio, body) {
   return {
     client_account_id: body.clientAccountId || null,
     event_id: body.eventId || null,
+    booking_id: body.bookingId || null,
     customer: { name: c.name, email: c.email || null, phone: c.phone || '', address: c.address || '', state_code: c.gstin ? c.gstin.slice(0, 2) : c.stateCode || null, gstin: c.gstin || null },
     issue_date: issueDate,
     due_date: dueDate || null,
@@ -190,7 +195,7 @@ async function buildInvoice(studio, body) {
   };
 }
 
-const COLS = ['client_account_id', 'event_id', 'customer', 'issue_date', 'due_date', 'lines', 'discount_paise', 'gst_rate', 'place_of_supply', 'taxable_paise', 'cgst_paise', 'sgst_paise', 'igst_paise', 'total_paise', 'notes'];
+const COLS = ['client_account_id', 'event_id', 'booking_id', 'customer', 'issue_date', 'due_date', 'lines', 'discount_paise', 'gst_rate', 'place_of_supply', 'taxable_paise', 'cgst_paise', 'sgst_paise', 'igst_paise', 'total_paise', 'notes'];
 const values = (b) => COLS.map((c) => (c === 'customer' || c === 'lines' ? JSON.stringify(b[c]) : b[c]));
 
 r.post('/studio/:studioId', async (req, res) => {

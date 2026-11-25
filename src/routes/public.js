@@ -12,6 +12,7 @@ import { BLOCKED_ORG_STATUSES } from '../middleware/auth.js';
 import { notify, studioBrand, studioRecipients } from '../services/notify.js';
 import { enquiryMessage } from '../services/messages.js';
 import { present, paymentsFor } from '../services/clientInvoices.js';
+import { dateTaken } from '../services/bookings.js';
 import { renderClientInvoiceHtml } from '../services/clientInvoiceHtml.js';
 
 const r = Router();
@@ -100,8 +101,9 @@ r.post('/sites/:slug/enquiries', enquiryLimiter, express.json({ limit: '32kb' })
   );
   let dateAvailable = null;
   if (b.eventDate) {
-    const booked = await one('SELECT 1 FROM events WHERE studio_id = $1 AND event_date = $2', [studio.id, b.eventDate]);
-    dateAvailable = !booked;
+    // Taken if a gallery event or a tentative/confirmed booking is on that date.
+    const event = await one('SELECT 1 FROM events WHERE studio_id = $1 AND event_date = $2', [studio.id, b.eventDate]);
+    dateAvailable = !event && !(await dateTaken(studio.id, b.eventDate));
   }
   const [enquiry] = await q(
     `INSERT INTO enquiries(studio_id, name, phone, email, event_date, city, event_type, budget, message, date_available)

@@ -15,6 +15,7 @@ import publicRoutes from './routes/public.js';
 import billingRoutes, { webhook } from './routes/billing.js';
 import signupRoutes from './routes/signup.js';
 import invoiceRoutes from './routes/invoices.js';
+import bookingRoutes from './routes/bookings.js';
 
 export function createApp() {
   const app = express();
@@ -54,6 +55,7 @@ export function createApp() {
   app.use('/api/studios', studioRoutes);
   app.use('/api/events', eventRoutes);
   app.use('/api/invoices', invoiceRoutes);
+  app.use('/api/bookings', bookingRoutes);
   app.use('/api/portal', portalRoutes);
   app.use('/api/billing', billingRoutes);
 

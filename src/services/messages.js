@@ -161,3 +161,21 @@ export function paymentReceivedMessage({ brand, invoice, payment, url }) {
     email: { subject: `Payment received for invoice ${invoice.number}`, html: layout({ brand, title, paragraphs, cta }), text: text(title, paragraphs, cta) },
   };
 }
+
+/** Sent to the client when the studio confirms (or updates) a booking. */
+export function bookingConfirmedMessage({ brand, booking, updated = false }) {
+  const name = booking.client_name || '';
+  const title = updated ? 'Your booking was updated' : 'Your booking is confirmed';
+  const sessions = (booking.sessions || [])
+    .map((s) => `<b>${esc(s.label)}</b>: ${fmtDate(s.date)}${s.start_time ? `, ${esc(s.start_time)}${s.end_time ? `–${esc(s.end_time)}` : ''}` : ''}${s.venue ? `, ${esc(s.venue)}` : ''}`)
+    .join('<br>');
+  const paragraphs = [
+    `Hi ${esc(name.split(' ')[0])},`,
+    `${esc(brand.name)} has ${updated ? 'updated' : 'confirmed'} your booking <b>${esc(booking.title)}</b>.`,
+    sessions,
+    `If anything here is wrong, please contact ${esc(brand.name)}${brand.contact?.phone ? ` on ${esc(brand.contact.phone)}` : brand.contact?.email ? ` at ${esc(brand.contact.email)}` : ''}.`,
+  ].filter(Boolean);
+  return {
+    email: { subject: `${updated ? 'Booking updated' : 'Booking confirmed'}: ${booking.title}`, html: layout({ brand, title, paragraphs }), text: text(title, paragraphs) },
+  };
+}
