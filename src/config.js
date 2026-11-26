@@ -29,6 +29,15 @@ export const config = {
   storageDriver: env.STORAGE_DRIVER || 'local',
   awsRegion: env.AWS_REGION || 'ap-south-1',
   s3Bucket: env.S3_BUCKET_NAME || env.S3_BUCKET || '',
+  // Photo downloads through CloudFront (signed URLs). All three must be set, otherwise
+  // browsers get presigned S3 URLs (S3 internet egress, no CloudFront free tier).
+  mediaCdn: {
+    domain: (env.CLOUDFRONT_DOMAIN || '').replace(/^https?:\/\//, '').replace(/\/+$/, ''),
+    keyPairId: env.CLOUDFRONT_KEY_PAIR_ID || '',
+    // PEM text (CLOUDFRONT_PRIVATE_KEY, "\n" escapes allowed) or a file path (CLOUDFRONT_PRIVATE_KEY_PATH).
+    privateKey: (env.CLOUDFRONT_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+    privateKeyPath: env.CLOUDFRONT_PRIVATE_KEY_PATH || '',
+  },
   faceProvider: env.FACE_PROVIDER || 'none',
   // Secret header CloudFront adds to every request it forwards to the API (production only).
   originVerifySecret: env.ORIGIN_VERIFY_SECRET || '',
