@@ -33,7 +33,14 @@ function cdnPrivateKey() {
   cdnKey = null;
   if (domain && keyPairId) {
     if (privateKey) cdnKey = privateKey;
-    else if (privateKeyPath) cdnKey = fs.readFileSync(privateKeyPath, 'utf8');
+    else if (privateKeyPath) {
+      try {
+        cdnKey = fs.readFileSync(privateKeyPath, 'utf8');
+      } catch (e) {
+        console.error(`[storage] cannot read CLOUDFRONT_PRIVATE_KEY_PATH (${e.code || e.message}): photo URLs go straight to S3`);
+        return null;
+      }
+    }
   }
   if (config.storageDriver === 's3' && !cdnKey) console.warn('[storage] CLOUDFRONT_* not set: photo URLs go straight to S3');
   return cdnKey;
