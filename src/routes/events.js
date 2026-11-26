@@ -11,8 +11,6 @@ import { deleteEventFaces } from '../services/faces.js';
 import { parse, HttpError } from '../util.js';
 import { notify, studioBrand } from '../services/notify.js';
 import { photosReadyMessage } from '../services/messages.js';
-import { requestEventRestore } from '../services/retention.js';
-import { config } from '../config.js';
 import { photoView } from './photoView.js';
 
 const r = Router();
@@ -56,9 +54,9 @@ r.post('/studio/:studioId', async (req, res) => {
     if (b.showInPortfolio === undefined) b.showInPortfolio = true;
   }
   const ev = await one(
-    `INSERT INTO events(studio_id, title, event_date, venue, raw_enabled, face_enabled, show_in_portfolio, expires_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7, now() + make_interval(months => $8)) RETURNING *`,
-    [studio.id, b.title, b.eventDate || null, b.venue || null, !!b.rawEnabled, b.faceEnabled ?? true, !!b.showInPortfolio, plan.retention_months]
+    `INSERT INTO events(studio_id, title, event_date, venue, raw_enabled, face_enabled, show_in_portfolio)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+    [studio.id, b.title, b.eventDate || null, b.venue || null, !!b.rawEnabled, b.faceEnabled ?? true, !!b.showInPortfolio]
   );
   res.status(201).json(ev);
 });
@@ -121,7 +119,6 @@ r.delete('/:id', async (req, res) => {
 r.post('/:id/uploads', async (req, res) => {
   const g = await eventGuard(req, res, req.params.id);
   if (!g) return;
-  if (g.event.status !== 'active') throw new HttpError(400, 'This event is archived. Restore it before uploading.');
   const { files, ceremony } = parse(
     z.object({
       ceremony: z.string().min(1).max(40).default('Wedding'),
@@ -138,7 +135,7 @@ r.post('/:id/uploads', async (req, res) => {
     [g.studio.org_id]
   );
   const incoming = files.reduce((s, f) => s + f.size, 0);
-  if (Number(quota.used) + incoming > quota.storage_gb * 1024 ** 3) throw new HttpError(402, `Storage limit of ${quota.storage_gb} GB reached. Add storage or archive old events.`);
+  if (Number(quota.used) + incoming > quota.storage_gb * 1024 ** 3) throw new HttpError(402, `Storage limit of ${quota.storage_gb} GB reached. Delete old events you no longer need, or move to a bigger plan.`);
 
   const out = [];
   for (const f of files) {
@@ -166,7 +163,7 @@ r.post('/:id/uploads', async (req, res) => {
       bytes: f.size,
       status: 'awaiting',
     });
-    out.push({ name: f.name, photoId: photo.id, upload: await storage.uploadUrl(key, { contentType, storageClass: isRaw ? 'raw' : 'original' }) });
+    out.push({ name: f.name, photoId: photo.id, upload: await storage.uploadUrl(key, { contentType }) });
   }
   res.json({ files: out });
 });
@@ -190,7 +187,6 @@ r.post('/:id/uploads/complete', async (req, res) => {
 r.post('/:id/notify-clients', async (req, res) => {
   const g = await eventGuard(req, res, req.params.id);
   if (!g) return;
-  if (g.event.status !== 'active') throw new HttpError(400, 'This event is archived');
   const notifyPlan = await one('SELECT p.client_galleries FROM plans p JOIN organizations o ON o.plan_id = p.id WHERE o.id = $1', [g.studio.org_id]);
   if (!notifyPlan.client_galleries) throw new HttpError(402, 'Client galleries are not included in the Website plan. Upgrade to Starter or above to add clients.');
   const clients = await q(
@@ -211,16 +207,6 @@ r.post('/:id/notify-clients', async (req, res) => {
   }
   const [ev] = await q('UPDATE events SET clients_notified_at = now() WHERE id = $1 RETURNING clients_notified_at', [g.event.id]);
   res.json({ clients: clients.length, emails, whatsapps, notifiedAt: ev.clients_notified_at });
-});
-
-// Restore add-on: bring an archived event back (S3 Deep Archive restore takes up to ~12 hours).
-r.post('/:id/restore', async (req, res) => {
-  const g = await eventGuard(req, res, req.params.id);
-  if (!g) return;
-  if (!['super_admin', 'org_admin', 'studio_admin'].includes(req.user.role)) throw new HttpError(403, 'Only studio admins can restore events');
-  if (g.event.status !== 'archived') throw new HttpError(400, g.event.status === 'restoring' ? 'A restore is already in progress' : 'This event is not archived');
-  const restore = await requestEventRestore({ event: g.event, orgId: g.studio.org_id, accountId: req.user.id });
-  res.json({ status: 'restoring', amountInr: restore.amount_inr, extendsMonths: config.retention.restoreExtendsMonths });
 });
 
 r.get('/:id/photos', async (req, res) => {

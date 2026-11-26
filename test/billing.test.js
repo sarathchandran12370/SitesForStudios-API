@@ -219,14 +219,10 @@ describe('billing (Razorpay + GST invoices)', () => {
     assert.equal(r.status, 400);
   });
 
-  it('invoices renewals from the webhook, with restore add-ons and no duplicates', async () => {
-    const [restore] = await ctx.db.q(
-      `INSERT INTO event_restores(event_id, org_id, amount_inr, status, razorpay_addon_id) VALUES ($1,$2,499,'done','ao_test') RETURNING *`,
-      [ctx.fx.event.id, ctx.fx.org.id]
-    );
+  it('invoices renewals from the webhook, with no duplicates', async () => {
     // Downgrade takes effect at renewal: Razorpay now reports the starter plan.
     fake.subs[subId].plan_id = 'plan_starter_m';
-    const amount = withGst(3499, 18) + withGst(499, 18);
+    const amount = withGst(3499, 18);
     const evt = {
       event: 'subscription.charged',
       payload: { subscription: { entity: { ...fake.subs[subId], status: 'active', current_start: now(), current_end: now() + 30 * 86400 } }, payment: { entity: { id: 'pay_renewal_1', amount } } },
@@ -241,11 +237,9 @@ describe('billing (Razorpay + GST invoices)', () => {
     const renewal = all[1];
     assert.equal(renewal.number, `SFS/${fy}/0002`);
     assert.equal(renewal.total_paise, amount);
-    assert.equal(renewal.lines.length, 2);
-    assert.match(renewal.lines[1].description, /Gallery restore/);
-    assert.equal(renewal.lines[1].taxable_paise, 49900);
-    assert.equal(renewal.lines[0].taxable_paise + renewal.lines[1].taxable_paise, renewal.taxable_paise);
-    assert.equal((await ctx.db.one('SELECT invoice_id FROM event_restores WHERE id = $1', [restore.id])).invoice_id, renewal.id);
+    assert.equal(renewal.lines.length, 1);
+    assert.match(renewal.lines[0].description, /Starter plan/);
+    assert.equal(renewal.lines[0].taxable_paise, renewal.taxable_paise);
     const o = await org();
     assert.equal(o.plan_id, 'starter');
     assert.equal(o.pending_plan_id, null);

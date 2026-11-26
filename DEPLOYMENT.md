@@ -8,7 +8,7 @@ The test environment runs on one EC2 server (Ubuntu 24.04) that also hosts other
 | API | Node 24 under PM2 as `sfs-api`, port 4000, nginx proxies `/api/` | Private Node in `~/apps/sitesforstudios/node`; the system Node is untouched |
 | PostgreSQL | Local, its own role and database `sitesforstudios` | Listens on localhost only |
 | MongoDB | The existing local MongoDB, separate database `sitesforstudios` | Other databases untouched |
-| Photos | Server disk, `~/apps/sitesforstudios/shared/storage` | Switch to S3 later (below) |
+| Photos | Server disk, `~/apps/sitesforstudios/shared/storage` | Switch to Cloudflare R2 later (below) |
 | Secrets | `~/apps/sitesforstudios/shared/.env` (generated on first deploy, mode 600) | Never in git |
 | HTTPS | Let's Encrypt via certbot, renewed automatically | |
 
@@ -69,16 +69,15 @@ Target layout for the test environment: users open **`https://app.thaaram.in`** 
 
 ## Later
 
-- **Photos on S3:** set `STORAGE_DRIVER=s3`, `S3_BUCKET_NAME`, `AWS_REGION=ap-south-1` and AWS credentials (better: attach an IAM role to the instance with access to that bucket and Rekognition). Give the bucket CORS for `PUT` from `https://api.thaaram.in`.
-- **Photos through CloudFront** (after photos are on S3). Downloads then cost the CloudFront rate with 1 TB/month free, instead of S3 internet egress. Uploads still go straight to S3.
-  1. CloudFront → *Public keys*: add `keys/cloudfront-public.pem` (local, gitignored). *Key groups*: create one with that key. Note the public key ID (`K…`).
-  2. New distribution (keep it separate from the app one): origin = the photos bucket with an **Origin Access Control**; viewer protocol *Redirect to HTTPS*; *Restrict viewer access* = Yes, trusted key group from step 1; allowed methods GET, HEAD.
-  3. Cache policy (new): TTL 1 day default, query strings *include* only `response-content-disposition`. Origin request policy (new): query strings *include* only `response-content-disposition`. (The signature parameters stay out of the cache key, so cached photos are reused across signed URLs.)
-  4. Bucket policy: allow `s3:GetObject` for `cloudfront.amazonaws.com` with `AWS:SourceArn` = this distribution (CloudFront offers to copy it). Keep *Block public access* on.
-  5. Optional: alternate domain `media.thaaram.in` with an ACM certificate in **us-east-1**, and a GoDaddy CNAME to the distribution.
-  6. On the EC2: copy the private key to `~/apps/sitesforstudios/shared/cloudfront-private.pem` (`chmod 600`), then add to `shared/.env`: `CLOUDFRONT_DOMAIN` (the custom domain or `dxxxx.cloudfront.net`), `CLOUDFRONT_KEY_PAIR_ID`, `CLOUDFRONT_PRIVATE_KEY_PATH`. Run `deploy.sh`.
-  7. Check: open a gallery; image URLs should start with `https://<CLOUDFRONT_DOMAIN>/` and a full-size download should keep its filename. If these settings are missing, the API logs a warning and falls back to presigned S3 URLs.
-- **Face recognition:** `FACE_PROVIDER=rekognition` (needs the same AWS access).
+- **Photos on Cloudflare R2** (downloads are free, so there is no archiving and no CloudFront for photos):
+  1. Cloudflare dashboard → R2 → *Create bucket*, e.g. `sfs-photos`, location hint **Asia-Pacific**. Keep public access off.
+  2. Bucket → *Settings* → *CORS policy*: allow `PUT` and `GET` from `https://app.thaaram.in` (and the production domain later), header `Content-Type`.
+  3. R2 → *Manage API tokens* → create a token with **Object Read & Write** for that bucket only. Note the Access Key ID and Secret.
+  4. Optional: bucket → *Object lifecycle rules*: move objects older than 90 days to **Infrequent Access** (cheaper storage, small fee per GB when downloaded).
+  5. On the EC2, add to `shared/.env`: `STORAGE_DRIVER=r2`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`. Run `deploy.sh`.
+  6. Existing photos on the server's disk (`shared/storage`) must be copied into the bucket with the same keys before switching, e.g. with `rclone copy` using the same token.
+  7. Check: upload a photo to an event; its URLs should start with `https://<bucket>.<account>.r2.cloudflarestorage.com/`, and a full-size download should keep its filename.
+- **Face recognition:** `FACE_PROVIDER=rekognition` with AWS credentials (or an IAM role on the instance) allowed to use Rekognition in `ap-south-1`.
 - **Razorpay:** keys, seller details and the webhook `https://api.thaaram.in/api/billing/webhook` (see README).
 - **Own server or bigger instance** before real customers: this one has 1 GB RAM and is shared.
 - **Production domain:** when `sitesforstudios.in` is bought, point it here, add it to nginx and certbot, set `APP_URL` and rebuild the web app with `VITE_APP_HOSTS`.

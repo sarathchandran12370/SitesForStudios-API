@@ -1,9 +1,9 @@
-// Razorpay subscriptions + GST invoices. Shared by the billing routes, the webhook and the retention job.
+// Razorpay subscriptions + GST invoices. Shared by the billing routes and the webhook.
 import crypto from 'node:crypto';
 import { config } from '../config.js';
-import { q, one, tx } from '../db/pg.js';
+import { one, tx } from '../db/pg.js';
 import { HttpError } from '../util.js';
-import { GST_STATES, splitInclusive, withGst, financialYear } from './gst.js';
+import { GST_STATES, splitInclusive, financialYear } from './gst.js';
 import { notify } from './notify.js';
 
 const b = config.billing;
@@ -67,7 +67,7 @@ function sellerSnapshot() {
 
 /**
  * Create the invoice for one Razorpay payment (idempotent per payment id).
- * The amount actually paid is the source of truth; lines are the plan plus any restore add-ons billed with it.
+ * The amount actually paid is the source of truth.
  */
 export async function createInvoiceForPayment({ orgId, paymentId, subscriptionId, amountPaise, plan, cycle, periodStart, periodEnd, issuedAt = new Date() }) {
   const existing = await one('SELECT * FROM invoices WHERE razorpay_payment_id = $1', [paymentId]);
@@ -80,18 +80,11 @@ export async function createInvoiceForPayment({ orgId, paymentId, subscriptionId
   const placeOfSupply = buyer.gstin ? buyer.gstin.slice(0, 2) : buyer.stateCode;
   const rate = gstRate();
 
-  const addons = await q(
-    `SELECT r.id, r.amount_inr, e.title FROM event_restores r JOIN events e ON e.id = r.event_id
-     WHERE r.org_id = $1 AND r.razorpay_addon_id IS NOT NULL AND r.invoice_id IS NULL`,
-    [orgId]
-  );
   const split = splitInclusive(amountPaise, rate, b.sellerStateCode, placeOfSupply);
-  const addonLines = addons.map((a) => ({ description: `Gallery restore: ${a.title}`, sac: b.sac, taxable_paise: a.amount_inr * 100 }));
-  const addonTotal = addonLines.reduce((s, l) => s + l.taxable_paise, 0);
   const planLine = {
     description: `${plan ? `${plan.name} plan` : 'Subscription'} (${cycle === 'yearly' ? 'yearly' : 'monthly'})${periodStart && periodEnd ? `, ${fmtDay(periodStart)} to ${fmtDay(periodEnd)}` : ''}`,
     sac: b.sac,
-    taxable_paise: Math.max(0, split.taxable - addonTotal),
+    taxable_paise: split.taxable,
   };
 
   const invoice = await tx(async (client) => {
@@ -101,11 +94,10 @@ export async function createInvoiceForPayment({ orgId, paymentId, subscriptionId
          total_paise, gst_rate, place_of_supply, buyer, seller, razorpay_payment_id, razorpay_subscription_id)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
        ON CONFLICT (razorpay_payment_id) DO NOTHING RETURNING *`,
-      [orgId, number, issuedAt, periodStart || null, periodEnd || null, JSON.stringify([planLine, ...addonLines]), split.taxable, split.cgst, split.sgst, split.igst,
+      [orgId, number, issuedAt, periodStart || null, periodEnd || null, JSON.stringify([planLine]), split.taxable, split.cgst, split.sgst, split.igst,
         amountPaise, rate, placeOfSupply, JSON.stringify(buyer), JSON.stringify(sellerSnapshot()), paymentId, subscriptionId || null]
     );
     if (!rows[0]) return null; // another request created it at the same moment
-    if (addons.length) await client.query('UPDATE event_restores SET invoice_id = $1 WHERE id = ANY($2)', [rows[0].id, addons.map((a) => a.id)]);
     return rows[0];
   });
   const inv = invoice || (await one('SELECT * FROM invoices WHERE razorpay_payment_id = $1', [paymentId]));
@@ -126,20 +118,6 @@ export async function createInvoiceForPayment({ orgId, paymentId, subscriptionId
 }
 
 const fmtDay = (d) => new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-
-/** Bill a gallery restore on the organization's next subscription charge (Razorpay add-on). */
-export async function addRestoreAddon(restore) {
-  if (!razorpayEnabled()) return null;
-  const org = await one('SELECT razorpay_subscription_id, status FROM organizations WHERE id = $1', [restore.org_id]);
-  if (!org?.razorpay_subscription_id || !['active', 'past_due'].includes(org.status)) return null;
-  const amount = withGst(restore.amount_inr, gstRate());
-  const addon = await razorpay('POST', `/subscriptions/${org.razorpay_subscription_id}/addons`, {
-    item: { name: 'Gallery restore', amount, currency: 'INR' },
-    quantity: 1,
-  });
-  await q('UPDATE event_restores SET razorpay_addon_id = $2 WHERE id = $1', [restore.id, addon.id]);
-  return addon;
-}
 
 /** Apply a Razorpay subscription entity to the organization (plan, cycle, status, period end). */
 export async function syncSubscription(sub, statusOverride) {

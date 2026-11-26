@@ -1,4 +1,4 @@
-// Email + WhatsApp notifications, shared by every role's routes and the retention job.
+// Email + WhatsApp notifications, shared by every role's routes and the background jobs.
 // Every message is recorded in the `notifications` table. Sending never throws: a failure is
 // recorded with status "failed" so the action that triggered it (creating a client, an enquiry…) still succeeds.
 import { config } from '../config.js';

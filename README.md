@@ -2,7 +2,7 @@
 
 Backend for SitesForStudios, the website builder and client photo delivery platform for wedding studios. The web app lives in [SitesForStudios-UI](https://github.com/sarathchandran12370/SitesForStudios-UI).
 
-Node.js 24 · Express 5 · PostgreSQL 16 · MongoDB · Amazon S3 · Amazon Rekognition · Razorpay
+Node.js 24 · Express 5 · PostgreSQL 16 · MongoDB · Cloudflare R2 · Amazon Rekognition · Razorpay
 
 ## Run locally
 
@@ -53,13 +53,14 @@ npm test
 
 Runs the API test suite (Node's built-in test runner) against a separate test database: PostgreSQL `sitesforstudios_test` (created automatically) and MongoDB `sitesforstudios_test`, with local file storage in a temp folder. Your dev data, S3 and AWS are never touched. Override the databases with `TEST_DATABASE_URL` and `TEST_MONGO_URL`. Set `TEST_VERBOSE=1` to see server logs.
 
-Covered: login and passwords, role checks, suspended organizations, plan editing and limits, notifications, retention (warnings, archive, restore), uploads incl. HEIC, ZIP and RAW downloads.
+Covered: login and passwords, role checks, suspended organizations, plan editing and limits, notifications, R2 signed links, client invoices, bookings, uploads incl. HEIC, ZIP and RAW downloads.
 
-## Notifications and retention
+## Notifications and background jobs
 
 - **Email:** `EMAIL_PROVIDER=log` (development) records messages in the `notifications` table, visible to the Super Admin under **Sent messages**. `EMAIL_PROVIDER=ses` sends through Amazon SES (verify the `EMAIL_FROM` domain in SES first).
-- **WhatsApp:** `WHATSAPP_PROVIDER=meta` with a WhatsApp Business Cloud API token, phone number ID and approved template names (`WHATSAPP_TEMPLATE_*`). Template parameters in order: invite `{{1}} name, {{2}} studio, {{3}} login URL, {{4}} email, {{5}} temporary password`; photos ready `{{1}} name, {{2}} event, {{3}} studio, {{4}} link`; enquiry `{{1}} name, {{2}} phone, {{3}} date, {{4}} link`; retention `{{1}} name, {{2}} event, {{3}} archive date, {{4}} link`.
-- **Retention:** every `RETENTION_CHECK_HOURS` the API warns the studio and couple 30 and 7 days before an event expires, archives expired events (originals and RAW to S3 Glacier Deep Archive, clients lose access) and completes restores. A restore (₹499 by default) takes up to ~12 hours on S3 and keeps the event online for 6 more months. Deep Archive bills a minimum of 180 days per object.
+- **WhatsApp:** `WHATSAPP_PROVIDER=meta` with a WhatsApp Business Cloud API token, phone number ID and approved template names (`WHATSAPP_TEMPLATE_*`). Template parameters in order: invite `{{1}} name, {{2}} studio, {{3}} login URL, {{4}} email, {{5}} temporary password`; photos ready `{{1}} name, {{2}} event, {{3}} studio, {{4}} link`; enquiry `{{1}} name, {{2}} phone, {{3}} date, {{4}} link`.
+- **No archiving:** galleries stay online while the studio subscribes and stays within its plan storage. Studios free space by deleting old events or moving to a bigger plan. (Archiving to S3 Glacier Deep Archive was removed when photo storage moved to Cloudflare R2, which has free downloads.)
+- **Background jobs:** every `JOBS_CHECK_HOURS` (default 1; the old name `RETENTION_CHECK_HOURS` still works) the API sends trial reminders and ends expired trials.
 
 ## Onboarding: self sign-up and trials
 
@@ -102,7 +103,7 @@ src/
 ├── middleware/auth.js  session cookie, role and ownership checks
 ├── routes/             one router per role (see below)
 └── services/
-    ├── storage.js      local disk (dev) or S3, signed URLs
+    ├── storage.js      local disk (dev) or Cloudflare R2 (S3 API), signed URLs
     ├── processing.js   thumbnails + face indexing queue
     └── faces.js        Rekognition collections, clustering, selfie search
 ```
@@ -132,7 +133,7 @@ The test environment runs on an EC2 server at `https://api.thaaram.in` (web app 
 ## Production checklist
 
 - [ ] `NODE_ENV=production`, real `JWT_SECRET` and `MEDIA_SIGNING_SECRET`.
-- [ ] `STORAGE_DRIVER=s3` with a private bucket in `ap-south-1`, CORS for PUT from the app origin, lifecycle rules (originals to Standard-IA after 90 days, RAW to Glacier Instant Retrieval).
+- [ ] `STORAGE_DRIVER=r2` with a private R2 bucket (location hint Asia-Pacific), an R2 API token with Object Read & Write on that bucket only, CORS for `PUT` and `GET` from the app origin, and optionally a lifecycle rule moving objects older than 90 days to Infrequent Access.
 - [ ] CloudFront signed URLs for media.
 - [ ] Move processing from the in-process queue to S3 events → SQS → Lambda.
 - [ ] Background ZIP jobs (5 GB parts) with an emailed link.

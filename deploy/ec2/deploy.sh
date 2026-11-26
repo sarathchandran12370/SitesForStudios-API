@@ -61,15 +61,15 @@ DATABASE_URL=postgres://sitesforstudios:$(cat "$SHARED/pg-password")@127.0.0.1:5
 MONGO_URL=mongodb://127.0.0.1:27017/sitesforstudios
 JWT_SECRET=$(openssl rand -hex 32)
 MEDIA_SIGNING_SECRET=$(openssl rand -hex 32)
-# Photos on this server's disk for now. For S3: STORAGE_DRIVER=s3, S3_BUCKET_NAME, AWS_REGION and
-# AWS credentials (or an IAM role on the instance).
+# Photos on this server's disk for now. For Cloudflare R2: STORAGE_DRIVER=r2, R2_ACCOUNT_ID,
+# R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and R2_BUCKET (see DEPLOYMENT.md).
 STORAGE_DRIVER=local
 LOCAL_STORAGE_DIR=$SHARED/storage
 AWS_REGION=ap-south-1
 FACE_PROVIDER=none
 PROCESSING_CONCURRENCY=1
 EMAIL_PROVIDER=log
-RETENTION_CHECK_HOURS=1
+JOBS_CHECK_HOURS=1
 SEED_ADMIN_EMAIL=admin@$DOMAIN
 SEED_ADMIN_PASSWORD=$ADMIN_PASS
 ENV

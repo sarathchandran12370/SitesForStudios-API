@@ -47,8 +47,8 @@ async function seedDemo() {
     [pw, org.id, studio.id]
   );
   const event = await one(
-    `INSERT INTO events(studio_id, title, event_date, venue, raw_enabled, show_in_portfolio, expires_at)
-     VALUES ($1,'Anjali & Rahul','2026-11-08','Kumarakom Lake Resort, Kerala', true, true, now() + interval '24 months') RETURNING *`,
+    `INSERT INTO events(studio_id, title, event_date, venue, raw_enabled, show_in_portfolio)
+     VALUES ($1,'Anjali & Rahul','2026-11-08','Kumarakom Lake Resort, Kerala', true, true) RETURNING *`,
     [studio.id]
   );
   await q(`INSERT INTO event_access(event_id, account_id, access_level) VALUES ($1,$2,'primary')`, [event.id, client.id]);

@@ -25,9 +25,6 @@ async function access(req, eventId) {
     if (!plan.client_galleries) throw new HttpError(403, `Online galleries are not available from ${event.studio_name} right now. Please contact your photographer.`);
     const a = await one('SELECT access_level FROM event_access WHERE event_id = $1 AND account_id = $2', [eventId, req.user.id]);
     if (!a) throw new HttpError(404, 'Event not found');
-    if (event.status !== 'active') {
-      throw new HttpError(410, `This gallery has been archived. Please contact ${event.studio_name} if you would like it restored.`);
-    }
     return { event, level: a.access_level };
   }
   if (canManageStudio(req.user, { id: event.studio_id, org_id: event.org_id })) return { event, level: 'primary' };
@@ -52,7 +49,7 @@ r.get('/invoices', async (req, res) => {
 
 r.get('/events', async (req, res) => {
   const rows = await q(
-    `SELECT e.id, e.title, e.event_date, e.venue, e.cover_photo_id, e.status, e.expires_at, ea.access_level, s.name AS studio_name
+    `SELECT e.id, e.title, e.event_date, e.venue, e.cover_photo_id, ea.access_level, s.name AS studio_name
      FROM event_access ea JOIN events e ON e.id = ea.event_id JOIN studios s ON s.id = e.studio_id
      WHERE ea.account_id = $1 ORDER BY e.event_date DESC NULLS LAST`,
     [req.user.id]
@@ -83,8 +80,6 @@ r.get('/events/:id', async (req, res) => {
     venue: event.venue,
     studioName: event.studio_name,
     accessLevel: level,
-    status: event.status,
-    expiresAt: event.expires_at,
     ceremonies: ceremonies.map((c) => ({ name: c._id, count: c.n })),
     highlightCount: highlights,
     rawAvailable: rawCount > 0,
@@ -201,7 +196,6 @@ r.get('/photos/:pid/download', async (req, res) => {
   const photo = await Photo.findById(req.params.pid).lean().catch(() => null);
   if (!photo || photo.status !== 'ready') throw new HttpError(404, 'Photo not found');
   const { event, level } = await access(req, photo.eventId);
-  if (event.status !== 'active') throw new HttpError(410, 'This gallery is archived');
   if (photo.kind === 'raw' && (!event.raw_enabled || level !== 'primary')) throw new HttpError(403, 'RAW files are only for the couple');
   res.redirect(await storage.url(photo.originalKey, { expiresIn: 900, download: photo.filename }));
 });
@@ -209,7 +203,6 @@ r.get('/photos/:pid/download', async (req, res) => {
 // ZIP download streamed on the fly. Production: build ZIPs <= 5 GB in a background job and email the link.
 r.get('/events/:id/download', async (req, res) => {
   const { event, level } = await access(req, req.params.id);
-  if (event.status !== 'active') throw new HttpError(410, 'This gallery is archived');
   const type = String(req.query.type || 'all');
   const filter = { eventId: event.id, status: 'ready' };
   if (type === 'raw') {

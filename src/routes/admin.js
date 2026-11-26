@@ -6,7 +6,6 @@ import { requireRole } from '../middleware/auth.js';
 import { parse, tempPassword, hashPassword, HttpError } from '../util.js';
 import { notify } from '../services/notify.js';
 import { inviteMessage } from '../services/messages.js';
-import { runRetention } from '../services/retention.js';
 import { runTrials } from '../services/trials.js';
 import { config } from '../config.js';
 
@@ -39,7 +38,6 @@ r.put('/plans/:id', async (req, res) => {
       staff_seats: z.number().int().positive(),
       raw_delivery: z.boolean(),
       premium_templates: z.boolean(),
-      retention_months: z.number().int().min(1).max(120),
       client_galleries: z.boolean().default(true),
       razorpay_plan_id: z.string().max(60).optional().nullable(),
       razorpay_plan_id_yearly: z.string().max(60).optional().nullable(),
@@ -48,12 +46,12 @@ r.put('/plans/:id', async (req, res) => {
   );
   const row = await one(
     `UPDATE plans SET name=$2, price_monthly_inr=$3, price_yearly_inr=$4, storage_gb=$5, max_studios=$6,
-       face_events_per_month=$7, staff_seats=$8, raw_delivery=$9, premium_templates=$10, retention_months=$11,
-       razorpay_plan_id=$12, razorpay_plan_id_yearly=$13, client_galleries=$14
+       face_events_per_month=$7, staff_seats=$8, raw_delivery=$9, premium_templates=$10,
+       razorpay_plan_id=$11, razorpay_plan_id_yearly=$12, client_galleries=$13
      WHERE id=$1 RETURNING *`,
     [
       req.params.id, body.name, body.price_monthly_inr, body.price_yearly_inr, body.storage_gb, body.max_studios,
-      body.face_events_per_month, body.staff_seats, body.raw_delivery, body.premium_templates, body.retention_months,
+      body.face_events_per_month, body.staff_seats, body.raw_delivery, body.premium_templates,
       body.razorpay_plan_id || null, body.razorpay_plan_id_yearly || null, body.client_galleries,
     ]
   );
@@ -148,8 +146,6 @@ r.get('/invoices', async (_req, res) => {
   );
 });
 
-// Run the retention job now (normally hourly): warnings, archiving, finished restores.
-r.post('/retention/run', async (_req, res) => res.json(await runRetention()));
 r.post('/trials/run', async (_req, res) => res.json(await runTrials()));
 
 // Latest emails / WhatsApp messages across the platform (in development, "log" emails land here).

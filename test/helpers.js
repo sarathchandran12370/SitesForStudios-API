@@ -20,7 +20,7 @@ Object.assign(process.env, {
   FACE_PROVIDER: 'none',
   EMAIL_PROVIDER: 'log',
   WHATSAPP_PROVIDER: 'none',
-  RETENTION_CHECK_HOURS: '0',
+  JOBS_CHECK_HOURS: '0',
   PROCESSING_CONCURRENCY: '1',
   APP_URL: 'http://app.test',
 });
@@ -105,7 +105,7 @@ async function fixtures() {
   const client = await mk('couple@test.local', 'Anu & Vivek', 'client', { phone: '9800000001' });
   const guest = await mk('guest@test.local', 'Guest', 'client');
   const event = await one(
-    `INSERT INTO events(studio_id,title,event_date,venue,raw_enabled,show_in_portfolio,expires_at) VALUES ($1,'Anu & Vivek','2026-12-20','Kochi',true,true, now() + interval '24 months') RETURNING *`,
+    `INSERT INTO events(studio_id,title,event_date,venue,raw_enabled,show_in_portfolio) VALUES ($1,'Anu & Vivek','2026-12-20','Kochi',true,true) RETURNING *`,
     [studio.id]
   );
   await q(`INSERT INTO event_access(event_id,account_id,access_level) VALUES ($1,$2,'primary'),($1,$3,'guest')`, [event.id, client.id, guest.id]);

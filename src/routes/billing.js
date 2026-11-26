@@ -60,11 +60,6 @@ r.get('/summary', requireRole('org_admin'), async (req, res) => {
       `SELECT id, number, issued_at, total_paise, status FROM invoices WHERE org_id = $1 ORDER BY issued_at DESC LIMIT 36`,
       [org.id]
     ),
-    unbilledAddons: await q(
-      `SELECT r.id, r.amount_inr, r.created_at, e.title FROM event_restores r JOIN events e ON e.id = r.event_id
-       WHERE r.org_id = $1 AND r.invoice_id IS NULL ORDER BY r.created_at DESC`,
-      [org.id]
-    ),
     billing: { enabled: razorpayEnabled(), keyId: config.razorpay.keyId || null, gst: gstEnabled(), gstRate: rate },
   });
 });

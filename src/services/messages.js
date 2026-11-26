@@ -86,45 +86,6 @@ export function enquiryMessage({ brand, enquiry }) {
   };
 }
 
-/** Sent to the studio and the couple N days before an event is archived. */
-export function retentionWarningMessage({ brand, name, event, daysLeft, forStudio }) {
-  const url = forStudio ? `${config.appUrl}/events/${event.id}` : `${config.appUrl}/portal/events/${event.id}`;
-  const title = `${daysLeft} days left to download`;
-  const paragraphs = forStudio
-    ? [`The gallery <b>${esc(event.title)}</b> will be archived on ${fmtDate(event.expires_at)}. Clients will no longer be able to view or download it.`, 'To keep it online longer, upgrade your plan or restore it later from the event page.']
-    : [`Hi ${esc(name.split(' ')[0])},`, `Your gallery <b>${esc(event.title)}</b> will be archived on ${fmtDate(event.expires_at)}. Please download any photos you want to keep before then.`];
-  const cta = { label: forStudio ? 'Open event' : 'Download your photos', url };
-  return {
-    email: { subject: `${event.title}: gallery will be archived in ${daysLeft} days`, html: layout({ brand, title, paragraphs, cta }), text: text(title, paragraphs, cta) },
-    whatsapp: { template: 'retention', params: [name, event.title, fmtDate(event.expires_at), url], preview: `${event.title} archives in ${daysLeft} days` },
-  };
-}
-
-export function archivedMessage({ brand, event }) {
-  const url = `${config.appUrl}/events/${event.id}`;
-  const title = 'Gallery archived';
-  const paragraphs = [
-    `<b>${esc(event.title)}</b> reached the end of its retention period and has been archived. Clients can no longer view or download it.`,
-    `You can restore it from the event page for ₹${config.retention.restorePriceInr}. Restoring takes up to 12 hours and keeps it online for ${config.retention.restoreExtendsMonths} more months.`,
-  ];
-  const cta = { label: 'Open event', url };
-  return { email: { subject: `${event.title} has been archived`, html: layout({ brand, title, paragraphs, cta }), text: text(title, paragraphs, cta) } };
-}
-
-export function restoredMessage({ brand, name, event, forStudio }) {
-  const url = forStudio ? `${config.appUrl}/events/${event.id}` : `${config.appUrl}/portal/events/${event.id}`;
-  const title = 'Gallery available again';
-  const paragraphs = [
-    forStudio ? `<b>${esc(event.title)}</b> has been restored.` : `Hi ${esc(name.split(' ')[0])}, your gallery <b>${esc(event.title)}</b> is available again.`,
-    `It stays online until ${fmtDate(event.expires_at)}.`,
-  ];
-  const cta = { label: forStudio ? 'Open event' : 'View your photos', url };
-  return {
-    email: { subject: `${event.title} is available again`, html: layout({ brand, title, paragraphs, cta }), text: text(title, paragraphs, cta) },
-    whatsapp: { template: 'photosReady', params: [name, event.title, brand.name, url], preview: `Restored: ${event.title}` },
-  };
-}
-
 const rupees = (paise) => `₹${(Number(paise) / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 /** Invoice from a studio to its client, with the private link to view and print it. */

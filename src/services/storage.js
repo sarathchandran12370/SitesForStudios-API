@@ -1,5 +1,7 @@
-// Storage abstraction: "local" writes under server/storage (dev); "s3" uses Amazon S3.
-// URLs handed to browsers are always short-lived and signed.
+// Storage abstraction: "local" writes under server/storage (dev); "r2" uses Cloudflare R2 (production);
+// "s3" uses Amazon S3. R2 and S3 share the same code: R2 speaks the S3 API, with free downloads.
+// URLs handed to browsers are always short-lived and signed. Files stay in normal storage for as long as
+// the event exists: there is no archiving.
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -25,37 +27,19 @@ function safeLocalPath(key) {
   return p;
 }
 
-// CloudFront signing key, loaded once. null = CloudFront not configured (fall back to S3 presigned URLs).
-let cdnKey;
-function cdnPrivateKey() {
-  if (cdnKey !== undefined) return cdnKey;
-  const { domain, keyPairId, privateKey, privateKeyPath } = config.mediaCdn;
-  cdnKey = null;
-  if (domain && keyPairId) {
-    if (privateKey) cdnKey = privateKey;
-    else if (privateKeyPath) {
-      try {
-        cdnKey = fs.readFileSync(privateKeyPath, 'utf8');
-      } catch (e) {
-        console.error(`[storage] cannot read CLOUDFRONT_PRIVATE_KEY_PATH (${e.code || e.message}): photo URLs go straight to S3`);
-        return null;
-      }
-    }
-  }
-  if (config.storageDriver === 's3' && !cdnKey) console.warn('[storage] CLOUDFRONT_* not set: photo URLs go straight to S3');
-  return cdnKey;
-}
-
-// Key path segments are encoded the same way S3 expects, so CloudFront forwards the exact key.
-function cdnObjectUrl(key) {
-  return `https://${config.mediaCdn.domain}/${key.split('/').map(encodeURIComponent).join('/')}`;
-}
-
 let s3 = null;
 async function s3client() {
   if (!s3) {
     const { S3Client } = await import('@aws-sdk/client-s3');
-    s3 = new S3Client({ region: config.awsRegion });
+    const o = config.objectStore;
+    s3 = new S3Client({
+      region: o.region,
+      ...(o.endpoint ? { endpoint: o.endpoint } : {}),
+      ...(o.accessKeyId ? { credentials: { accessKeyId: o.accessKeyId, secretAccessKey: o.secretAccessKey } } : {}),
+      // R2 rejects the optional checksum headers newer AWS SDKs add to signed upload links.
+      requestChecksumCalculation: 'WHEN_REQUIRED',
+      responseChecksumValidation: 'WHEN_REQUIRED',
+    });
   }
   return s3;
 }
@@ -106,13 +90,6 @@ const local = {
     const sig = sign(`put:${key}:${exp}`);
     return { url: `/api/uploads/${key}?exp=${exp}&sig=${sig}`, method: 'PUT', headers: { 'Content-Type': contentType } };
   },
-  // Archiving only exists on S3. Locally files stay where they are and restores are instant.
-  async archive() {},
-  async requestRestore() {},
-  async isRestored() {
-    return true;
-  },
-  async unarchive() {},
   verifyGet(key, exp, sig, dl = '') {
     return Number(exp) > Date.now() / 1000 && verifySignature(`get:${key}:${exp}:${dl ? encodeURIComponent(dl) : ''}`, sig);
   },
@@ -121,6 +98,7 @@ const local = {
   },
 };
 
+// Cloudflare R2 or Amazon S3.
 const s3driver = {
   async put(key, body, contentType) {
     const { PutObjectCommand } = await import('@aws-sdk/client-s3');
@@ -147,85 +125,22 @@ const s3driver = {
     const { DeleteObjectCommand } = await import('@aws-sdk/client-s3');
     await (await s3client()).send(new DeleteObjectCommand({ Bucket: config.s3Bucket, Key: key }));
   },
-  // Retention: move an object to Glacier Deep Archive in place (same key, tags kept).
-  async archive(key) {
-    const { CopyObjectCommand } = await import('@aws-sdk/client-s3');
-    await (await s3client()).send(
-      new CopyObjectCommand({
-        Bucket: config.s3Bucket,
-        Key: key,
-        CopySource: encodeURI(`${config.s3Bucket}/${key}`),
-        StorageClass: 'DEEP_ARCHIVE',
-        MetadataDirective: 'COPY',
-        TaggingDirective: 'COPY',
-      })
-    );
-  },
-  // Ask S3 to bring an archived object back (Standard tier: within ~12 hours).
-  async requestRestore(key) {
-    const { RestoreObjectCommand } = await import('@aws-sdk/client-s3');
-    try {
-      await (await s3client()).send(
-        new RestoreObjectCommand({ Bucket: config.s3Bucket, Key: key, RestoreRequest: { Days: 7, GlacierJobParameters: { Tier: 'Standard' } } })
-      );
-    } catch (e) {
-      if (e.name !== 'RestoreAlreadyInProgress') throw e;
-    }
-  },
-  async isRestored(key) {
-    const { HeadObjectCommand } = await import('@aws-sdk/client-s3');
-    const head = await (await s3client()).send(new HeadObjectCommand({ Bucket: config.s3Bucket, Key: key }));
-    if (head.StorageClass !== 'DEEP_ARCHIVE' && head.StorageClass !== 'GLACIER') return true;
-    return /ongoing-request="false"/.test(head.Restore || '');
-  },
-  // After a restore finishes, copy it back to a normal storage class so it stays available.
-  async unarchive(key, storageClass = 'STANDARD_IA') {
-    const { CopyObjectCommand } = await import('@aws-sdk/client-s3');
-    await (await s3client()).send(
-      new CopyObjectCommand({
-        Bucket: config.s3Bucket,
-        Key: key,
-        CopySource: encodeURI(`${config.s3Bucket}/${key}`),
-        StorageClass: storageClass,
-        MetadataDirective: 'COPY',
-        TaggingDirective: 'COPY',
-      })
-    );
-  },
-  // Downloads go through CloudFront when it is configured (cheaper egress, 1 TB/month free).
-  // The CloudFront behaviour must forward the `response-content-disposition` query string to S3.
+  // Short-lived signed link straight to the bucket. On R2, downloads are free.
   async url(key, { expiresIn = 900, download } = {}) {
     const disposition = download ? `attachment; filename="${download.replace(/"/g, '')}"` : undefined;
-    const privateKey = cdnPrivateKey();
-    if (privateKey) {
-      const { getSignedUrl } = await import('@aws-sdk/cloudfront-signer');
-      const base = cdnObjectUrl(key);
-      const url = disposition ? `${base}?response-content-disposition=${encodeURIComponent(disposition)}` : base;
-      return getSignedUrl({
-        url,
-        keyPairId: config.mediaCdn.keyPairId,
-        privateKey,
-        dateLessThan: new Date(Date.now() + expiresIn * 1000).toISOString(),
-      });
-    }
     const { GetObjectCommand } = await import('@aws-sdk/client-s3');
     const { getSignedUrl } = await import('@aws-sdk/s3-request-presigner');
     const cmd = new GetObjectCommand({ Bucket: config.s3Bucket, Key: key, ResponseContentDisposition: disposition });
     return getSignedUrl(await s3client(), cmd, { expiresIn });
   },
-  // `storageClass` becomes an object tag ("class=raw" / "class=original"); S3 lifecycle rules
-  // use it to move RAW to Glacier Instant Retrieval and originals to Standard-IA.
-  async uploadUrl(key, { expiresIn = 3600, contentType, storageClass } = {}) {
+  async uploadUrl(key, { expiresIn = 3600, contentType } = {}) {
     const { PutObjectCommand } = await import('@aws-sdk/client-s3');
     const { getSignedUrl } = await import('@aws-sdk/s3-request-presigner');
-    const tagging = storageClass ? `class=${storageClass}` : undefined;
-    const cmd = new PutObjectCommand({ Bucket: config.s3Bucket, Key: key, ContentType: contentType, Tagging: tagging });
-    const headers = { 'Content-Type': contentType };
-    if (tagging) headers['x-amz-tagging'] = tagging;
-    const url = await getSignedUrl(await s3client(), cmd, { expiresIn, unhoistableHeaders: new Set(tagging ? ['x-amz-tagging'] : []) });
-    return { url, method: 'PUT', headers };
+    const cmd = new PutObjectCommand({ Bucket: config.s3Bucket, Key: key, ContentType: contentType });
+    const url = await getSignedUrl(await s3client(), cmd, { expiresIn });
+    return { url, method: 'PUT', headers: { 'Content-Type': contentType } };
   },
 };
 
-export const storage = config.storageDriver === 's3' ? s3driver : local;
+export const storage = ['r2', 's3'].includes(config.storageDriver) ? s3driver : local;
 export const localStorage = local;

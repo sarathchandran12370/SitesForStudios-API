@@ -77,7 +77,7 @@ export async function runTrials(now = new Date()) {
 }
 
 export function startTrialScheduler() {
-  const hours = config.retention.checkEveryHours;
+  const hours = config.jobsEveryHours;
   if (!hours) return;
   const tick = () => runTrials().catch((e) => console.error('trials failed', e));
   setTimeout(tick, 90 * 1000).unref();

@@ -26,18 +26,19 @@ export const config = {
   mongoUrl: required('MONGO_URL', 'mongodb://127.0.0.1:27017/sitesforstudios'),
   jwtSecret: required('JWT_SECRET', 'dev-jwt-secret-change-me'),
   mediaSecret: required('MEDIA_SIGNING_SECRET', 'dev-media-secret-change-me'),
+  // Photo storage: "local" (this server's disk), "r2" (Cloudflare R2) or "s3" (Amazon S3).
   storageDriver: env.STORAGE_DRIVER || 'local',
-  awsRegion: env.AWS_REGION || 'ap-south-1',
-  s3Bucket: env.S3_BUCKET_NAME || env.S3_BUCKET || '',
-  // Photo downloads through CloudFront (signed URLs). All three must be set, otherwise
-  // browsers get presigned S3 URLs (S3 internet egress, no CloudFront free tier).
-  mediaCdn: {
-    domain: (env.CLOUDFRONT_DOMAIN || '').replace(/^https?:\/\//, '').replace(/\/+$/, ''),
-    keyPairId: env.CLOUDFRONT_KEY_PAIR_ID || '',
-    // PEM text (CLOUDFRONT_PRIVATE_KEY, "\n" escapes allowed) or a file path (CLOUDFRONT_PRIVATE_KEY_PATH).
-    privateKey: (env.CLOUDFRONT_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
-    privateKeyPath: env.CLOUDFRONT_PRIVATE_KEY_PATH || '',
-  },
+  awsRegion: env.AWS_REGION || 'ap-south-1', // Rekognition and SES
+  s3Bucket: env.R2_BUCKET || env.S3_BUCKET_NAME || env.S3_BUCKET || '',
+  objectStore:
+    env.STORAGE_DRIVER === 'r2'
+      ? {
+          region: 'auto',
+          endpoint: env.R2_ENDPOINT || (env.R2_ACCOUNT_ID ? `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com` : ''),
+          accessKeyId: env.R2_ACCESS_KEY_ID || '',
+          secretAccessKey: env.R2_SECRET_ACCESS_KEY || '',
+        }
+      : { region: env.AWS_REGION || 'ap-south-1', endpoint: env.S3_ENDPOINT || '', accessKeyId: '', secretAccessKey: '' },
   faceProvider: env.FACE_PROVIDER || 'none',
   // Secret header CloudFront adds to every request it forwards to the API (production only).
   originVerifySecret: env.ORIGIN_VERIFY_SECRET || '',
@@ -58,15 +59,10 @@ export const config = {
       invite: env.WHATSAPP_TEMPLATE_INVITE || '',
       photosReady: env.WHATSAPP_TEMPLATE_PHOTOS_READY || '',
       enquiry: env.WHATSAPP_TEMPLATE_ENQUIRY || '',
-      retention: env.WHATSAPP_TEMPLATE_RETENTION || '',
     },
   },
-  retention: {
-    // Hours between retention checks (warnings, archiving, restores). 0 disables the scheduler.
-    checkEveryHours: Number(env.RETENTION_CHECK_HOURS ?? 1),
-    restoreExtendsMonths: Number(env.RESTORE_EXTENDS_MONTHS || 6),
-    restorePriceInr: Number(env.RESTORE_PRICE_INR || 499),
-  },
+  // Hours between background checks (trial reminders and trial expiry). 0 disables them.
+  jobsEveryHours: Number(env.JOBS_CHECK_HOURS ?? env.RETENTION_CHECK_HOURS ?? 1),
   // Current Terms of Service / Privacy Policy version (web: src/pages/legal/details.js VERSION).
   // Changing it asks every user to accept again.
   termsVersion: env.TERMS_VERSION || '2026-11-23',
