@@ -8,10 +8,13 @@ import { Photo, Face, PersonCluster } from '../models/index.js';
 import { storage } from '../services/storage.js';
 import { enqueuePhoto } from '../services/processing.js';
 import { deleteEventFaces } from '../services/faces.js';
-import { parse, HttpError } from '../util.js';
+import { parse, HttpError, hashPassword } from '../util.js';
 import { notify, studioBrand } from '../services/notify.js';
 import { photosReadyMessage } from '../services/messages.js';
 import { photoView } from './photoView.js';
+import { DESIGN_OPTIONS, designOf } from '../services/gallery.js';
+import { selectionsForStudio, reopenSelection, threadsForStudio, addComment } from '../services/feedback.js';
+import { config } from '../config.js';
 
 const r = Router();
 r.use(requireRole(...STUDIO_MANAGERS));
@@ -19,6 +22,21 @@ r.use(requireRole(...STUDIO_MANAGERS));
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
 const HEIC_EXT = /\.(heic|heif)$/i; // many browsers send HEIC with an empty or generic type
 const RAW_EXT = /\.(cr2|cr3|nef|arw|raf|orf|rw2|dng|pef|srw)$/i;
+const VIDEO_EXT = /\.(mp4|mov|m4v|webm)$/i;
+const VIDEO_TYPES = { '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm' };
+const MAX_VIDEO_BYTES = 5 * 1024 ** 3; // one signed upload (PUT) can carry up to 5 GB
+
+/** An event row as the studio sees it: never the share password hash. */
+function eventOut(ev) {
+  if (!ev) return ev;
+  const { share_password_hash, ...rest } = ev;
+  return {
+    ...rest,
+    design: designOf(ev),
+    share_has_password: !!share_password_hash,
+    share_url: ev.share_token ? `${config.appUrl}/g/${ev.share_token}` : null,
+  };
+}
 
 r.get('/studio/:studioId', async (req, res) => {
   const studio = await studioGuard(req, res, req.params.studioId);
@@ -28,7 +46,7 @@ r.get('/studio/:studioId', async (req, res) => {
       `SELECT e.*, (SELECT count(*) FROM event_access ea WHERE ea.event_id = e.id)::int AS client_count
        FROM events e WHERE e.studio_id = $1 ORDER BY e.event_date DESC NULLS LAST, e.created_at DESC`,
       [studio.id]
-    )
+    ).then((rows) => rows.map(eventOut))
   );
 });
 
@@ -60,7 +78,7 @@ r.post('/studio/:studioId', async (req, res) => {
      VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
     [studio.id, b.title, b.eventDate || null, b.venue || null, !!b.rawEnabled, !!b.faceEnabled, !!b.showInPortfolio]
   );
-  res.status(201).json(ev);
+  res.status(201).json(eventOut(ev));
 });
 
 r.get('/:id', async (req, res) => {
@@ -75,7 +93,7 @@ r.get('/:id', async (req, res) => {
     `SELECT a.id, a.name, a.email, ea.access_level FROM event_access ea JOIN accounts a ON a.id = ea.account_id WHERE ea.event_id = $1`,
     [g.event.id]
   );
-  res.json({ ...g.event, storage_bytes: Number(g.event.storage_bytes), counts, ceremonies, clients });
+  res.json({ ...eventOut(g.event), storage_bytes: Number(g.event.storage_bytes), counts, ceremonies, clients });
 });
 
 r.patch('/:id', async (req, res) => {
@@ -101,7 +119,98 @@ r.patch('/:id', async (req, res) => {
       b.rawEnabled ?? null, b.faceEnabled ?? null, b.showInPortfolio ?? null, 'coverPhotoId' in b, b.coverPhotoId ?? null,
     ]
   );
-  res.json(ev);
+  res.json(eventOut(ev));
+});
+
+// ---------- Gallery settings: selection limit, downloads, watermark, design ----------
+
+const designSchema = z.object(Object.fromEntries(Object.entries(DESIGN_OPTIONS).map(([k, v]) => [k, z.enum(v).optional()])));
+
+r.put('/:id/gallery', async (req, res) => {
+  const g = await eventGuard(req, res, req.params.id);
+  if (!g) return;
+  const b = parse(
+    z.object({
+      selectionLimit: z.number().int().min(1).max(5000).nullable().optional(),
+      downloads: z.enum(['full', 'web', 'none']).optional(),
+      watermark: z.boolean().optional(),
+      design: designSchema.optional(),
+    }),
+    req.body
+  );
+  const ev = await one(
+    `UPDATE events SET
+       selection_limit = CASE WHEN $2::boolean THEN $3::int ELSE selection_limit END,
+       downloads = coalesce($4, downloads), watermark = coalesce($5, watermark),
+       design = CASE WHEN $6::jsonb IS NULL THEN design ELSE design || $6::jsonb END
+     WHERE id = $1 RETURNING *`,
+    [g.event.id, 'selectionLimit' in b, b.selectionLimit ?? null, b.downloads ?? null, b.watermark ?? null, b.design ? JSON.stringify(b.design) : null]
+  );
+  res.json(eventOut(ev));
+});
+
+// ---------- Guest share link ----------
+
+// Turn the link on or off, set or clear its password, allow guest downloads, or make a new link (the old one stops working).
+r.put('/:id/share', async (req, res) => {
+  const g = await eventGuard(req, res, req.params.id);
+  if (!g) return;
+  const b = parse(
+    z.object({
+      enabled: z.boolean().optional(),
+      password: z.string().min(4).max(60).nullable().optional(), // null removes the password
+      downloads: z.boolean().optional(),
+      regenerate: z.boolean().optional(),
+    }),
+    req.body
+  );
+  const plan = await one('SELECT p.client_galleries FROM plans p JOIN organizations o ON o.plan_id = p.id WHERE o.id = $1', [g.studio.org_id]);
+  if (b.enabled && !plan.client_galleries) throw new HttpError(402, 'Share links come with client galleries (Starter and above).');
+  const token = !g.event.share_token || b.regenerate ? crypto.randomBytes(18).toString('base64url') : g.event.share_token;
+  const hash = b.password === undefined ? undefined : b.password === null ? null : await hashPassword(b.password);
+  const ev = await one(
+    `UPDATE events SET share_token = $2, share_enabled = coalesce($3, share_enabled),
+       share_password_hash = CASE WHEN $4::boolean THEN $5 ELSE share_password_hash END,
+       share_downloads = coalesce($6, share_downloads)
+     WHERE id = $1 RETURNING *`,
+    [g.event.id, token, b.enabled ?? null, hash !== undefined, hash ?? null, b.downloads ?? null]
+  );
+  res.json(eventOut(ev));
+});
+
+// ---------- Album selections and comments from clients ----------
+
+r.get('/:id/selections', async (req, res) => {
+  const g = await eventGuard(req, res, req.params.id);
+  if (!g) return;
+  res.json(await selectionsForStudio(g.event));
+});
+
+// Unlock a client's sent selection so they can change it.
+r.post('/:id/selections/:accountId/reopen', async (req, res) => {
+  const g = await eventGuard(req, res, req.params.id);
+  if (!g) return;
+  await reopenSelection(g.event.id, req.params.accountId);
+  res.json({ ok: true });
+});
+
+r.get('/:id/comments', async (req, res) => {
+  const g = await eventGuard(req, res, req.params.id);
+  if (!g) return;
+  const threads = await threadsForStudio(g.event.id);
+  const photos = await Photo.find({ _id: { $in: [...new Set(threads.map((t) => t.photoId))] } }).lean();
+  const views = new Map((await Promise.all(photos.map(photoView))).map((p) => [p.id, p]));
+  res.json(threads.map((t) => ({ ...t, photo: views.get(t.photoId) || null })));
+});
+
+// The studio replies in one client's thread on a photo.
+r.post('/:id/photos/:pid/comments', async (req, res) => {
+  const g = await eventGuard(req, res, req.params.id);
+  if (!g) return;
+  const b = parse(z.object({ clientAccountId: z.string().uuid(), body: z.string().min(1).max(2000) }), req.body);
+  const onEvent = await one('SELECT 1 FROM event_access WHERE event_id = $1 AND account_id = $2', [g.event.id, b.clientAccountId]);
+  if (!onEvent) throw new HttpError(404, 'Client not found on this event');
+  res.status(201).json(await addComment({ event: g.event, photoId: req.params.pid, clientAccountId: b.clientAccountId, authorAccountId: req.user.id, fromStudio: true, body: b.body }));
 });
 
 r.delete('/:id', async (req, res) => {
@@ -110,7 +219,7 @@ r.delete('/:id', async (req, res) => {
   if (!['super_admin', 'org_admin', 'studio_admin'].includes(req.user.role)) throw new HttpError(403, 'Only studio admins can delete events');
   const photos = await Photo.find({ eventId: g.event.id }).lean();
   for (const p of photos) {
-    for (const k of [p.originalKey, p.variants?.thumb, p.variants?.web]) if (k) await storage.remove(k).catch(() => {});
+    for (const k of [p.originalKey, p.variants?.thumb, p.variants?.web, p.variants?.wm]) if (k) await storage.remove(k).catch(() => {});
   }
   await Photo.deleteMany({ eventId: g.event.id });
   await deleteEventFaces(g.event.id);
@@ -143,6 +252,23 @@ r.post('/:id/uploads', async (req, res) => {
   const out = [];
   for (const f of files) {
     const isRaw = RAW_EXT.test(f.name);
+    const isVideo = !isRaw && (VIDEO_EXT.test(f.name) || f.type.startsWith('video/'));
+    if (isVideo) {
+      const ext = (f.name.match(/\.[a-z0-9]+$/i)?.[0] || '').toLowerCase();
+      if (!VIDEO_TYPES[ext]) {
+        out.push({ name: f.name, error: 'Videos must be MP4, MOV, M4V or WebM' });
+        continue;
+      }
+      if (f.size > MAX_VIDEO_BYTES) {
+        out.push({ name: f.name, error: 'Videos can be up to 5 GB each' });
+        continue;
+      }
+      const contentType = VIDEO_TYPES[ext];
+      const key = `studios/${g.studio.id}/events/${g.event.id}/video/${crypto.randomUUID()}${ext}`;
+      const video = await Photo.create({ eventId: g.event.id, studioId: g.studio.id, kind: 'video', ceremony, filename: f.name, originalKey: key, contentType, bytes: f.size, status: 'awaiting' });
+      out.push({ name: f.name, photoId: video.id, upload: await storage.uploadUrl(key, { contentType }) });
+      continue;
+    }
     if (!isRaw && HEIC_EXT.test(f.name) && !IMAGE_TYPES.includes(f.type)) f.type = 'image/heic';
     if (!isRaw && !IMAGE_TYPES.includes(f.type)) {
       out.push({ name: f.name, error: 'Unsupported file type' });
@@ -215,7 +341,7 @@ r.post('/:id/notify-clients', async (req, res) => {
 r.get('/:id/photos', async (req, res) => {
   const g = await eventGuard(req, res, req.params.id);
   if (!g) return;
-  const filter = { eventId: g.event.id, kind: req.query.kind === 'raw' ? 'raw' : 'image', status: { $ne: 'awaiting' } };
+  const filter = { eventId: g.event.id, kind: ['raw', 'video'].includes(req.query.kind) ? req.query.kind : 'image', status: { $ne: 'awaiting' } };
   if (req.query.ceremony) filter.ceremony = String(req.query.ceremony);
   if (req.query.highlights === '1') filter.isHighlight = true;
   const photos = await Photo.find(filter).sort({ ceremony: 1, filename: 1 }).limit(5000).lean();
@@ -243,7 +369,7 @@ r.delete('/:id/photos', async (req, res) => {
   const photos = await Photo.find({ _id: { $in: photoIds }, eventId: g.event.id });
   let freed = 0;
   for (const p of photos) {
-    for (const k of [p.originalKey, p.variants?.thumb, p.variants?.web]) if (k) await storage.remove(k).catch(() => {});
+    for (const k of [p.originalKey, p.variants?.thumb, p.variants?.web, p.variants?.wm]) if (k) await storage.remove(k).catch(() => {});
     freed += p.bytes || 0;
     const faces = await Face.find({ photoId: p.id });
     for (const f of faces) await PersonCluster.updateOne({ _id: f.clusterId }, { $inc: { faceCount: -1 } });

@@ -67,6 +67,19 @@ export function photosReadyMessage({ brand, name, event, photoCount }) {
   };
 }
 
+/** To the studio: a client sent their album selection. */
+export function selectionSentMessage({ brand, event, clientName, count, note }) {
+  const url = `${config.appUrl}/events/${event.id}`;
+  const title = `${clientName} sent their selection`;
+  const paragraphs = [
+    `${esc(clientName)} picked <b>${count} photos</b> from <b>${esc(event.title)}</b>.`,
+    note ? `Their note: “${esc(note)}”` : '',
+    'Open the event to see the photos and copy the file names for Lightroom or Capture One.',
+  ].filter(Boolean);
+  const cta = { label: 'View the selection', url };
+  return { email: { subject: `Selection received: ${event.title} (${count} photos)`, html: layout({ brand, title, paragraphs, cta }), text: text(title, paragraphs, cta) } };
+}
+
 export function enquiryMessage({ brand, enquiry }) {
   const url = `${config.appUrl}/studio/${brand.id}/enquiries`;
   const title = `New enquiry from ${enquiry.name}`;

@@ -16,6 +16,7 @@ import billingRoutes, { webhook } from './routes/billing.js';
 import signupRoutes from './routes/signup.js';
 import invoiceRoutes from './routes/invoices.js';
 import bookingRoutes from './routes/bookings.js';
+import shareRoutes from './routes/share.js';
 
 export function createApp() {
   const app = express();
@@ -57,6 +58,7 @@ export function createApp() {
   app.use('/api/invoices', invoiceRoutes);
   app.use('/api/bookings', bookingRoutes);
   app.use('/api/portal', portalRoutes);
+  app.use('/api/share', shareRoutes); // public guest links: no login
   app.use('/api/billing', billingRoutes);
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));

@@ -313,4 +313,36 @@ function summarize(r) {
   return { email: r.email?.status || null, whatsapp: r.whatsapp?.status || null };
 }
 
+// ---------- Client reviews (left from the gallery; published reviews show on the website) ----------
+
+r.get('/:id/reviews', async (req, res) => {
+  const studio = await studioGuard(req, res, req.params.id);
+  if (!studio) return;
+  res.json(
+    await q(
+      `SELECT rv.id, rv.author_name, rv.rating, rv.body, rv.status, rv.created_at, rv.updated_at, e.title AS event_title
+       FROM reviews rv LEFT JOIN events e ON e.id = rv.event_id WHERE rv.studio_id = $1
+       ORDER BY (rv.status = 'pending') DESC, rv.updated_at DESC`,
+      [studio.id]
+    )
+  );
+});
+
+r.patch('/:id/reviews/:reviewId', async (req, res) => {
+  const studio = await studioGuard(req, res, req.params.id);
+  if (!studio) return;
+  const { status } = parse(z.object({ status: z.enum(['published', 'hidden', 'pending']) }), req.body);
+  const row = await one('UPDATE reviews SET status = $3, updated_at = now() WHERE id = $2 AND studio_id = $1 RETURNING id, status', [studio.id, req.params.reviewId, status]);
+  if (!row) throw new HttpError(404, 'Review not found');
+  res.json(row);
+});
+
+r.delete('/:id/reviews/:reviewId', async (req, res) => {
+  const studio = await studioGuard(req, res, req.params.id);
+  if (!studio) return;
+  const rows = await q('DELETE FROM reviews WHERE id = $2 AND studio_id = $1 RETURNING id', [studio.id, req.params.reviewId]);
+  if (!rows.length) throw new HttpError(404, 'Review not found');
+  res.json({ ok: true });
+});
+
 export default r;

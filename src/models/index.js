@@ -37,16 +37,19 @@ const SiteConfigSchema = new Schema(
   { timestamps: true }
 );
 
-// One document per uploaded file. kind=image: edited JPEG/PNG; kind=raw: camera RAW.
+// One document per uploaded file. kind=image: edited JPEG/PNG; kind=raw: camera RAW; kind=video: MP4/MOV film.
 const PhotoSchema = new Schema(
   {
     eventId: { type: String, required: true, index: true },
     studioId: { type: String, required: true, index: true },
-    kind: { type: String, enum: ['image', 'raw'], default: 'image' },
+    kind: { type: String, enum: ['image', 'raw', 'video'], default: 'image' },
     ceremony: { type: String, default: 'Wedding' },
     filename: String,
     originalKey: String,
-    variants: { thumb: String, web: String },
+    contentType: String, // videos: played straight from storage with this type
+    // wm: the web-size preview with the watermark, made on first view; wmText is the text it carries.
+    variants: { thumb: String, web: String, wm: String },
+    wmText: String,
     width: Number,
     height: Number,
     bytes: Number,

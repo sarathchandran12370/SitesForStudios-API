@@ -48,6 +48,11 @@ async function siteData(studio) {
     site: { ...site, _id: undefined, logoUrl: await urlFor(site.logoKey) },
     hero,
     portfolio,
+    // Reviews clients left from their galleries, once the studio published them.
+    reviews: await q(
+      `SELECT author_name AS author, rating, body AS quote FROM reviews WHERE studio_id = $1 AND status = 'published' ORDER BY updated_at DESC LIMIT 12`,
+      [studio.id]
+    ),
   };
 }
 

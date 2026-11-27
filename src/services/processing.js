@@ -53,7 +53,8 @@ export async function processPhoto(photoId) {
   try {
     const bytes = await storage.size(photo.originalKey);
     photo.bytes = bytes;
-    if (photo.kind === 'raw') {
+    if (photo.kind === 'raw' || photo.kind === 'video') {
+      // Stored and delivered as uploaded: no previews are made (videos play straight from storage).
       photo.status = 'ready';
       await photo.save();
       await addEventBytes(photo.eventId, bytes);

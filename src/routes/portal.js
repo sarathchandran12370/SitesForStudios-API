@@ -2,16 +2,17 @@
 import { Router } from 'express';
 import express from 'express';
 import sharp from 'sharp';
-import { ZipArchive } from 'archiver';
 import { z } from 'zod';
 import { q, one } from '../db/pg.js';
 import { requireAuth, canManageStudio } from '../middleware/auth.js';
 import { Photo, Face, PersonCluster } from '../models/index.js';
 import { storage } from '../services/storage.js';
-import { searchBySelfie, facesEnabled } from '../services/faces.js';
 import { parse, HttpError } from '../util.js';
-import { photoView } from './photoView.js';
 import { present } from '../services/clientInvoices.js';
+import { designOf, downloadMode, listFiles, gallerySummary, eventPhoto, sendPreview, downloadOne, streamZip, faceSearchOn, findMe, studioCard } from '../services/gallery.js';
+import { selectionState, setPicks, submitSelection, thread, addComment, commentedPhotoIds } from '../services/feedback.js';
+import { notify, studioBrand, studioRecipients } from '../services/notify.js';
+import { selectionSentMessage } from '../services/messages.js';
 
 const r = Router();
 r.use(requireAuth);
@@ -64,15 +65,14 @@ r.get('/events', async (req, res) => {
   res.json(out);
 });
 
+const BASE = '/api/portal';
+const isClient = (req) => req.user.role === 'client';
+
 r.get('/events/:id', async (req, res) => {
   const { event, level } = await access(req, req.params.id);
-  const ceremonies = await Photo.aggregate([
-    { $match: { eventId: event.id, kind: 'image', status: 'ready' } },
-    { $group: { _id: '$ceremony', n: { $sum: 1 } } },
-    { $sort: { _id: 1 } },
-  ]);
-  const highlights = await Photo.countDocuments({ eventId: event.id, kind: 'image', status: 'ready', isHighlight: true });
+  const summary = await gallerySummary(event);
   const rawCount = event.raw_enabled && level === 'primary' ? await Photo.countDocuments({ eventId: event.id, kind: 'raw', status: 'ready' }) : 0;
+  const review = isClient(req) ? await one('SELECT rating, body, status FROM reviews WHERE event_id = $1 AND account_id = $2', [event.id, req.user.id]) : null;
   res.json({
     id: event.id,
     title: event.title,
@@ -80,25 +80,40 @@ r.get('/events/:id', async (req, res) => {
     venue: event.venue,
     studioName: event.studio_name,
     accessLevel: level,
-    ceremonies: ceremonies.map((c) => ({ name: c._id, count: c.n })),
-    highlightCount: highlights,
+    ...summary,
     rawAvailable: rawCount > 0,
     rawCount,
-    facesEnabled: facesEnabled() && event.face_enabled,
+    facesEnabled: faceSearchOn(event),
+    design: designOf(event),
+    downloads: downloadMode(event),
+    watermark: event.watermark,
+    // Album selection and comments are for clients; studio staff previewing the gallery see neither.
+    canSelect: isClient(req),
+    selection: isClient(req) ? await selectionState(event, req.user.id) : null,
+    commented: isClient(req) ? await commentedPhotoIds(event.id, req.user.id) : [],
+    review,
+    studio: await studioCard(event.studio_id),
   });
 });
 
 r.get('/events/:id/photos', async (req, res) => {
   const { event } = await access(req, req.params.id);
-  const filter = { eventId: event.id, kind: 'image', status: 'ready' };
-  if (req.query.ceremony) filter.ceremony = String(req.query.ceremony);
-  if (req.query.highlights === '1') filter.isHighlight = true;
+  const extra = {};
   if (req.query.cluster) {
     const ids = await clusterFamily(event.id, String(req.query.cluster));
-    filter._id = { $in: await Face.distinct('photoId', { eventId: event.id, clusterId: { $in: ids } }) };
+    extra._id = { $in: await Face.distinct('photoId', { eventId: event.id, clusterId: { $in: ids } }) };
+  } else if (req.query.picked === '1' && isClient(req)) {
+    extra._id = { $in: (await selectionState(event, req.user.id)).ids };
   }
-  const photos = await Photo.find(filter).sort({ ceremony: 1, filename: 1 }).limit(5000).lean();
-  res.json(await Promise.all(photos.map(photoView)));
+  res.json(await listFiles(event, req.query, BASE, extra));
+});
+
+// Large preview (2048 px). Goes through here only when the event has watermarks.
+r.get('/photos/:pid/preview', async (req, res) => {
+  const photo = await Photo.findById(req.params.pid).lean().catch(() => null);
+  if (!photo) throw new HttpError(404, 'Photo not found');
+  const { event } = await access(req, photo.eventId);
+  await sendPreview(res, event, await eventPhoto(event, photo._id));
 });
 
 // ---------- People (face clusters) ----------
@@ -181,62 +196,90 @@ r.post('/clusters/:cid/merge', async (req, res) => {
 // "Find me": upload a selfie, get matching photos. The selfie is not stored.
 r.post('/events/:id/find-me', express.raw({ type: ['image/*'], limit: '8mb' }), async (req, res) => {
   const { event } = await access(req, req.params.id);
-  if (!facesEnabled() || !event.face_enabled) throw new HttpError(400, 'Face search is not available for this event');
-  if (!req.body?.length) throw new HttpError(400, 'Send a selfie image');
-  const jpeg = await sharp(req.body).rotate().resize({ width: 1200, height: 1200, fit: 'inside' }).jpeg({ quality: 85 }).toBuffer();
-  const ids = await searchBySelfie({ eventId: event.id, imageBytes: jpeg });
-  const photos = await Photo.find({ _id: { $in: ids }, kind: 'image', status: 'ready' }).lean();
-  res.json(await Promise.all(photos.map(photoView)));
+  res.json(await findMe(event, req.body, BASE));
+});
+
+// ---------- Album selection (each client picks their own) ----------
+
+async function clientAccess(req, eventId) {
+  if (!isClient(req)) throw new HttpError(403, 'Album selection is for clients');
+  return access(req, eventId);
+}
+
+r.get('/events/:id/selection', async (req, res) => {
+  const { event } = await clientAccess(req, req.params.id);
+  res.json(await selectionState(event, req.user.id));
+});
+
+r.put('/events/:id/selection', async (req, res) => {
+  const { event } = await clientAccess(req, req.params.id);
+  const b = parse(z.object({ photoIds: z.array(z.string().max(40)).min(1).max(2000), picked: z.boolean() }), req.body);
+  res.json(await setPicks(event, req.user.id, b.photoIds, b.picked));
+});
+
+// Send the selection to the studio. It is locked until the studio reopens it.
+r.post('/events/:id/selection/submit', async (req, res) => {
+  const { event } = await clientAccess(req, req.params.id);
+  const { note } = parse(z.object({ note: z.string().max(1000).optional() }), req.body || {});
+  const state = await submitSelection(event, req.user.id, note?.trim());
+  const brand = await studioBrand(event.studio_id);
+  const to = await studioRecipients(brand);
+  const msg = selectionSentMessage({ brand, event, clientName: req.user.name, count: state.ids.length, note: state.note });
+  await Promise.all(to.emails.map((email) => notify({ orgId: brand.org_id, kind: 'selection_sent', email: { to: email, ...msg.email } })));
+  res.json(state);
+});
+
+// ---------- Comments on photos (this client and the studio) ----------
+
+r.get('/photos/:pid/comments', async (req, res) => {
+  const photo = await Photo.findById(req.params.pid).lean().catch(() => null);
+  if (!photo) throw new HttpError(404, 'Photo not found');
+  await clientAccess(req, photo.eventId);
+  res.json(await thread(photo.eventId, String(photo._id), req.user.id));
+});
+
+r.post('/photos/:pid/comments', async (req, res) => {
+  const photo = await Photo.findById(req.params.pid).lean().catch(() => null);
+  if (!photo) throw new HttpError(404, 'Photo not found');
+  const { event } = await clientAccess(req, photo.eventId);
+  const { body } = parse(z.object({ body: z.string().min(1).max(2000) }), req.body);
+  res.status(201).json(await addComment({ event, photoId: String(photo._id), clientAccountId: req.user.id, authorAccountId: req.user.id, fromStudio: false, body }));
+});
+
+// ---------- Review for the studio (published on its website once the studio approves) ----------
+
+r.put('/events/:id/review', async (req, res) => {
+  const { event } = await clientAccess(req, req.params.id);
+  const b = parse(z.object({ rating: z.number().int().min(1).max(5), body: z.string().trim().min(10, 'Write at least a few words').max(1500), name: z.string().trim().min(2).max(80).optional() }), req.body);
+  // Editing a review sends it back to the studio for approval.
+  const row = await one(
+    `INSERT INTO reviews(studio_id, event_id, account_id, author_name, rating, body) VALUES ($1,$2,$3,$4,$5,$6)
+     ON CONFLICT (event_id, account_id) DO UPDATE SET author_name = EXCLUDED.author_name, rating = EXCLUDED.rating, body = EXCLUDED.body, status = 'pending', updated_at = now()
+     RETURNING rating, body, status`,
+    [event.studio_id, event.id, req.user.id, b.name || req.user.name, b.rating, b.body]
+  );
+  res.json(row);
 });
 
 // ---------- Downloads ----------
 
-// Single full-resolution photo: redirect to a short-lived signed URL.
 r.get('/photos/:pid/download', async (req, res) => {
   const photo = await Photo.findById(req.params.pid).lean().catch(() => null);
   if (!photo || photo.status !== 'ready') throw new HttpError(404, 'Photo not found');
   const { event, level } = await access(req, photo.eventId);
   if (photo.kind === 'raw' && (!event.raw_enabled || level !== 'primary')) throw new HttpError(403, 'RAW files are only for the couple');
-  res.redirect(await storage.url(photo.originalKey, { expiresIn: 900, download: photo.filename }));
+  await downloadOne(res, event, photo, downloadMode(event));
 });
 
-// ZIP download streamed on the fly. Production: build ZIPs <= 5 GB in a background job and email the link.
 r.get('/events/:id/download', async (req, res) => {
   const { event, level } = await access(req, req.params.id);
-  const type = String(req.query.type || 'all');
-  const filter = { eventId: event.id, status: 'ready' };
-  if (type === 'raw') {
-    if (!event.raw_enabled || level !== 'primary') throw new HttpError(403, 'RAW files are only for the couple');
-    filter.kind = 'raw';
-  } else {
-    filter.kind = 'image';
-    if (type === 'highlights') filter.isHighlight = true;
-    else if (type === 'selected') filter._id = { $in: String(req.query.ids || '').split(',').filter(Boolean).slice(0, 2000) };
-    else if (type === 'ceremony') filter.ceremony = String(req.query.ceremony || '');
-    else if (type !== 'all') throw new HttpError(400, 'Unknown download type');
-  }
-  const photos = await Photo.find(filter).sort({ ceremony: 1, filename: 1 }).lean();
-  if (!photos.length) throw new HttpError(404, 'Nothing to download');
-
-  const safe = (s) => String(s).replace(/[^\w\- ]+/g, '').trim() || 'photos';
-  const zipName = `${safe(event.title)} - ${type === 'raw' ? 'RAW' : type}.zip`;
-  res.set('Content-Type', 'application/zip');
-  res.set('Content-Disposition', `attachment; filename="${zipName}"`);
-  const archive = new ZipArchive({ store: true }); // photos are already compressed
-  archive.on('error', (e) => res.destroy(e));
-  archive.pipe(res);
-  const used = new Set();
-  for (const p of photos) {
-    let name = type === 'raw' ? p.filename : `${safe(p.ceremony)}/${p.filename}`;
-    while (used.has(name)) name = name.replace(/(\.[^.]+)?$/, '-1$1');
-    used.add(name);
-    // Append one file at a time so thousands of photos don't open thousands of streams at once.
-    const done = new Promise((resolve) => archive.once('entry', resolve));
-    archive.append(await storage.getStream(p.originalKey), { name });
-    await done;
-    if (res.destroyed) return;
-  }
-  await archive.finalize();
+  await streamZip(res, event, {
+    type: String(req.query.type || 'all'),
+    ceremony: req.query.ceremony,
+    ids: req.query.ids,
+    mode: downloadMode(event),
+    rawAllowed: event.raw_enabled && level === 'primary',
+  });
 });
 
 export default r;
