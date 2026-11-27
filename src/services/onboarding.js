@@ -100,7 +100,7 @@ export async function studioChecklist(studio, user) {
     { id: 'domain', label: 'Connect your own domain (optional)', done: ['verified', 'live'].includes(studio.domain_status), to: `${base}/domain`, optional: true },
   ];
   if (user.role === 'org_admin' || user.role === 'super_admin') {
-    steps.push({ id: 'billing', label: 'Add billing details for GST invoices', done: !!profile, to: '/org/billing' });
+    steps.push({ id: 'billing', label: config.billing.sellerGstin ? 'Add billing details for GST invoices' : 'Add billing details for invoices', done: !!profile, to: '/org/billing' });
     steps.push({ id: 'plan', label: 'Choose a plan', done: org?.status === 'active', to: '/org/billing' });
   }
   const required = steps.filter((s) => !s.optional);

@@ -79,3 +79,30 @@ describe('No archiving', () => {
     assert.doesNotMatch(r.body.error, /archive/i);
   });
 });
+
+describe('Face search not offered', () => {
+  it('no plan includes face events, and new events have face search off', async () => {
+    const admin = await as('admin@test.local');
+    const plans = (await admin.get('/api/admin/plans')).body;
+    // Pro was edited by the plan-editing tests above; every other plan keeps the seeded 0.
+    assert.ok(plans.filter((p) => p.id !== 'pro').every((p) => p.face_events_per_month === 0));
+    const pro = plans.find((p) => p.id === 'pro');
+    await admin.put('/api/admin/plans/pro', { ...pro, face_events_per_month: 0, razorpay_plan_id: pro.razorpay_plan_id || null, razorpay_plan_id_yearly: null });
+    const studio = await as('studio@test.local');
+    const ev = await studio.post(`/api/events/studio/${ctx.fx.studio.id}`, { title: 'No faces', faceEnabled: true });
+    assert.equal(ev.body.face_enabled, false);
+    const on = await studio.patch(`/api/events/${ev.body.id}`, { faceEnabled: true });
+    assert.equal(on.status, 402);
+    assert.match(on.body.error, /Face search is not included/);
+  });
+
+  it('the Super Admin can bring it back for a plan', async () => {
+    const admin = await as('admin@test.local');
+    const pro = (await admin.get('/api/admin/plans')).body.find((p) => p.id === 'pro');
+    await admin.put('/api/admin/plans/pro', { ...pro, face_events_per_month: 8, razorpay_plan_id: pro.razorpay_plan_id || null, razorpay_plan_id_yearly: null });
+    const studio = await as('studio@test.local');
+    const ev = await studio.post(`/api/events/studio/${ctx.fx.studio.id}`, { title: 'Faces back', faceEnabled: true });
+    assert.equal(ev.body.face_enabled, true);
+    await admin.put('/api/admin/plans/pro', { ...pro, face_events_per_month: 0, razorpay_plan_id: pro.razorpay_plan_id || null, razorpay_plan_id_yearly: null });
+  });
+});

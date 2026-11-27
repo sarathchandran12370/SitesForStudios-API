@@ -53,10 +53,12 @@ r.post('/studio/:studioId', async (req, res) => {
     b.faceEnabled = false;
     if (b.showInPortfolio === undefined) b.showInPortfolio = true;
   }
+  // Face search is offered only by plans with face events (none for now).
+  if (!plan.face_events_per_month) b.faceEnabled = false;
   const ev = await one(
     `INSERT INTO events(studio_id, title, event_date, venue, raw_enabled, face_enabled, show_in_portfolio)
      VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-    [studio.id, b.title, b.eventDate || null, b.venue || null, !!b.rawEnabled, b.faceEnabled ?? true, !!b.showInPortfolio]
+    [studio.id, b.title, b.eventDate || null, b.venue || null, !!b.rawEnabled, !!b.faceEnabled, !!b.showInPortfolio]
   );
   res.status(201).json(ev);
 });
@@ -84,6 +86,7 @@ r.patch('/:id', async (req, res) => {
     const plan = await one('SELECT p.* FROM plans p JOIN organizations o ON o.plan_id = p.id WHERE o.id = $1', [g.studio.org_id]);
     if (b.rawEnabled && !plan.raw_delivery) throw new HttpError(402, 'RAW delivery needs the Pro plan or higher');
     if (b.faceEnabled && !plan.client_galleries) throw new HttpError(402, 'Face recognition is not included in the Website plan');
+    if (b.faceEnabled && !plan.face_events_per_month) throw new HttpError(402, 'Face search is not included in your plan');
   }
   const ev = await one(
     `UPDATE events SET
