@@ -13,7 +13,10 @@ const SiteConfigSchema = new Schema(
       fontPair: { type: String, enum: ['template', 'classic', 'modern', 'editorial'], default: 'template' },
     },
     logoKey: String,
-    heroPhotoIds: [String],
+    heroPhotoIds: [String], // older field; heroImages replaces it
+    // Each template image slot: a highlight photo ({ photoId }) or a website upload ({ key }).
+    heroImages: { type: [{ _id: false, photoId: String, key: String }], default: undefined },
+    aboutImage: { type: { _id: false, photoId: String, key: String }, default: undefined },
     tagline: { type: String, default: 'Timeless wedding stories' },
     about: { type: String, default: '' },
     sections: {

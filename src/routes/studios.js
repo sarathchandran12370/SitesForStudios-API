@@ -13,6 +13,7 @@ import { parse, tempPassword, hashPassword, HttpError, publicAccount } from '../
 import { notify, studioBrand } from '../services/notify.js';
 import { inviteMessage, passwordResetMessage } from '../services/messages.js';
 import { studioChecklist } from '../services/onboarding.js';
+import { resolveSiteImages, heroList, siteImagePrefix } from '../services/siteImages.js';
 
 const r = Router();
 r.use(requireRole(...STUDIO_MANAGERS));
@@ -54,11 +55,20 @@ r.get('/:id/site', async (req, res) => {
     .sort({ createdAt: -1 })
     .limit(60)
     .lean();
+  const [heroImages, [aboutImage]] = await Promise.all([
+    resolveSiteImages(studio.id, heroList(site), { variant: 'thumb' }),
+    resolveSiteImages(studio.id, [site.aboutImage], { variant: 'thumb' }),
+  ]);
   res.json({
-    site: { ...site, logoUrl },
+    site: { ...site, logoUrl, heroImages, aboutImage: aboutImage || null },
     heroChoices: await Promise.all(heroChoices.map(async (p) => ({ id: String(p._id), thumb: await storage.url(p.variants.thumb, { expiresIn: 3600 }) }))),
   });
 });
+
+// A template image: a highlight photo or a website upload, never both.
+const siteImage = z
+  .object({ photoId: z.string().max(40).optional(), key: z.string().max(300).optional() })
+  .refine((i) => !!i.photoId !== !!i.key, 'an image needs a photoId or an upload key');
 
 const SECTION_IDS = ['about', 'portfolio', 'packages', 'testimonials', 'faq', 'contact'];
 const siteSchema = z.object({
@@ -67,6 +77,8 @@ const siteSchema = z.object({
   tagline: z.string().max(140).optional(),
   about: z.string().max(3000).optional(),
   heroPhotoIds: z.array(z.string()).max(6).optional(),
+  heroImages: z.array(siteImage).max(6).optional(),
+  aboutImage: siteImage.nullable().optional(),
   sections: z.array(z.object({ id: z.enum(SECTION_IDS), enabled: z.boolean() })).optional(),
   packages: z.array(z.object({ name: z.string().max(60), price: z.string().max(40), features: z.array(z.string().max(120)).max(10) })).max(6).optional(),
   testimonials: z.array(z.object({ quote: z.string().max(600), author: z.string().max(80) })).max(8).optional(),
@@ -98,8 +110,16 @@ r.put('/:id/site', async (req, res) => {
     await q('UPDATE studios SET template_id = $2 WHERE id = $1', [studio.id, body.templateId]);
   }
   if (body.logoKey && !body.logoKey.startsWith(`studios/${studio.id}/`)) throw new HttpError(400, 'Invalid logo');
+  const ownKey = (i) => !i?.key || i.key.startsWith(siteImagePrefix(studio.id));
+  if (!(body.heroImages || []).every(ownKey) || !ownKey(body.aboutImage)) throw new HttpError(400, 'Invalid image');
   const { publish, ...fields } = body;
-  const site = await SiteConfig.findOneAndUpdate({ studioId: studio.id }, { $set: fields }, { new: true, upsert: true });
+  if (fields.heroImages) fields.heroPhotoIds = []; // heroImages replaces the older field
+  const unset = {};
+  if (fields.aboutImage === null) {
+    delete fields.aboutImage;
+    unset.aboutImage = 1; // back to the automatic photo
+  }
+  const site = await SiteConfig.findOneAndUpdate({ studioId: studio.id }, { $set: fields, ...(Object.keys(unset).length ? { $unset: unset } : {}) }, { new: true, upsert: true });
   if (publish) await q('UPDATE studios SET published_at = coalesce(published_at, now()) WHERE id = $1', [studio.id]);
   res.json(site);
 });
@@ -110,6 +130,16 @@ r.post('/:id/logo-upload', async (req, res) => {
   const { contentType } = parse(z.object({ contentType: z.enum(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml']) }), req.body);
   const ext = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/svg+xml': 'svg' }[contentType];
   const key = `studios/${studio.id}/brand/logo-${Date.now()}.${ext}`;
+  res.json({ key, upload: await storage.uploadUrl(key, { contentType }) });
+});
+
+// Signed link to upload a photo for a template image slot (hero, about).
+r.post('/:id/site-image-upload', async (req, res) => {
+  const studio = await studioGuard(req, res, req.params.id);
+  if (!studio) return;
+  const { contentType } = parse(z.object({ contentType: z.enum(['image/png', 'image/jpeg', 'image/webp']) }), req.body);
+  const ext = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }[contentType];
+  const key = `${siteImagePrefix(studio.id)}${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`;
   res.json({ key, upload: await storage.uploadUrl(key, { contentType }) });
 });
 

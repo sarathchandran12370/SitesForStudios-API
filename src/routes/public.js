@@ -14,6 +14,7 @@ import { enquiryMessage } from '../services/messages.js';
 import { present, paymentsFor } from '../services/clientInvoices.js';
 import { dateTaken } from '../services/bookings.js';
 import { renderClientInvoiceHtml } from '../services/clientInvoiceHtml.js';
+import { resolveSiteImages, heroList } from '../services/siteImages.js';
 
 const r = Router();
 
@@ -36,17 +37,16 @@ async function siteData(studio) {
       photos: await Promise.all(photos.map(async (p) => ({ id: String(p._id), web: await urlFor(p.variants.web), thumb: await urlFor(p.variants.thumb), w: p.width, h: p.height }))),
     });
   }
-  let hero = [];
-  if (site.heroPhotoIds?.length) {
-    const hp = await Photo.find({ _id: { $in: site.heroPhotoIds }, studioId: studio.id, status: 'ready' }).lean();
-    hero = await Promise.all(hp.map((p) => urlFor(p.variants.web)));
-  }
+  const opts = { expiresIn: 6 * 3600 };
+  let hero = (await resolveSiteImages(studio.id, heroList(site), opts)).map((i) => i.url).filter(Boolean);
+  const [about] = await resolveSiteImages(studio.id, [site.aboutImage], opts);
   if (!hero.length) hero = portfolio.flatMap((p) => p.photos).slice(0, 3).map((p) => p.web);
   return {
     studio: { id: studio.id, name: studio.name, slug: studio.slug, published: !!studio.published_at },
     templateId: studio.template_id,
     site: { ...site, _id: undefined, logoUrl: await urlFor(site.logoKey) },
     hero,
+    aboutImage: about?.url || null,
     portfolio,
     // Reviews clients left from their galleries, once the studio published them.
     reviews: await q(
