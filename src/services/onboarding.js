@@ -19,7 +19,7 @@ export async function uniqueSlug(name, client = null) {
  * Organization + first studio + owner account in one transaction, on a free trial.
  * The owner is an org_admin linked to the studio, so single-studio owners land straight in their studio.
  */
-export async function createOrganizationWithStudio({ orgName, studioName, planId, owner, source = 'self' }) {
+export async function createOrganizationWithStudio({ orgName, studioName, planId, owner, source = 'self', createdBy = null, mustChangePassword = false }) {
   const result = await tx(async (c) => {
     if ((await c.query('SELECT 1 FROM accounts WHERE lower(email) = lower($1)', [owner.email])).rowCount)
       throw new HttpError(409, 'An account with this email already exists. Log in instead.');
@@ -34,9 +34,9 @@ export async function createOrganizationWithStudio({ orgName, studioName, planId
     const studio = (await c.query('INSERT INTO studios(org_id, name, slug, template_id) VALUES ($1,$2,$3,$4) RETURNING *', [org.id, studioName, slug, 'editorial'])).rows[0];
     const account = (
       await c.query(
-        `INSERT INTO accounts(email, name, phone, password_hash, role, org_id, studio_id, must_change_password)
-         VALUES ($1,$2,$3,$4,'org_admin',$5,$6,false) RETURNING *`,
-        [owner.email, owner.name, owner.phone || null, owner.passwordHash, org.id, studio.id]
+        `INSERT INTO accounts(email, name, phone, password_hash, role, org_id, studio_id, must_change_password, created_by)
+         VALUES ($1,$2,$3,$4,'org_admin',$5,$6,$7,$8) RETURNING *`,
+        [owner.email, owner.name, owner.phone || null, owner.passwordHash, org.id, studio.id, mustChangePassword, createdBy]
       )
     ).rows[0];
     return { org, studio, account };

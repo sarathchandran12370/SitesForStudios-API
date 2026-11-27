@@ -7,6 +7,7 @@ import { parse, tempPassword, hashPassword, HttpError } from '../util.js';
 import { notify } from '../services/notify.js';
 import { inviteMessage } from '../services/messages.js';
 import { runTrials } from '../services/trials.js';
+import { createOrganizationWithStudio } from '../services/onboarding.js';
 import { config } from '../config.js';
 
 const r = Router();
@@ -104,6 +105,39 @@ r.post('/orgs', async (req, res) => {
     invited = ['sent', 'logged'].includes(r.email?.status);
   }
   res.status(201).json({ org: result, owner: { email: body.ownerEmail, temporaryPassword: password }, invited });
+});
+
+// Create a single studio: its organization, the studio and the owner account in one go (same shape as self sign-up).
+// The owner is an org_admin linked to the studio, so they land straight in the studio dashboard.
+r.post('/studios', async (req, res) => {
+  const body = parse(
+    z.object({
+      studioName: z.string().trim().min(2).max(120),
+      planId: z.enum(['website', 'starter', 'pro', 'organization']),
+      ownerName: z.string().trim().min(2).max(120),
+      ownerEmail: z.string().trim().toLowerCase().email(),
+      ownerPhone: z.string().trim().max(20).optional(),
+      sendInvite: z.boolean().default(true),
+    }),
+    req.body
+  );
+  const password = tempPassword();
+  const { org, studio } = await createOrganizationWithStudio({
+    orgName: body.studioName,
+    studioName: body.studioName,
+    planId: body.planId,
+    owner: { name: body.ownerName, email: body.ownerEmail, phone: body.ownerPhone || null, passwordHash: await hashPassword(password) },
+    source: 'admin',
+    createdBy: req.user.id,
+    mustChangePassword: true,
+  });
+  let invited = false;
+  if (body.sendInvite) {
+    const msg = inviteMessage({ brand: { name: studio.name }, name: body.ownerName, email: body.ownerEmail, password, role: 'org_admin' });
+    const sent = await notify({ orgId: org.id, kind: 'invite', email: { to: body.ownerEmail, ...msg.email }, whatsapp: body.ownerPhone ? { to: body.ownerPhone, ...msg.whatsapp } : undefined });
+    invited = ['sent', 'logged'].includes(sent.email?.status);
+  }
+  res.status(201).json({ org, studio, owner: { email: body.ownerEmail, temporaryPassword: password }, invited });
 });
 
 r.patch('/orgs/:id', async (req, res) => {
