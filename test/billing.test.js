@@ -155,20 +155,20 @@ describe('billing (Razorpay + GST invoices)', () => {
     subId = r.body.subscriptionId;
     assert.ok(subId);
     assert.equal(r.body.keyId, 'rzp_test_key');
-    assert.equal(r.body.amountPaise, withGst(6999, 18));
+    assert.equal(r.body.amountPaise, withGst(5999, 18));
     assert.equal(fake.subs[subId].plan_id, 'plan_pro_m');
     assert.equal((await org()).pending_plan_id, 'pro');
   });
 
   it('refuses a payment with a bad signature', async () => {
-    const p = await pay(subId, withGst(6999, 18));
+    const p = await pay(subId, withGst(5999, 18));
     const r = await owner.post('/api/billing/verify', { ...p, razorpay_signature: 'bad' });
     assert.equal(r.status, 400);
     assert.equal((await org()).status, 'trial');
   });
 
   it('activates the plan and issues a GST invoice after payment', async () => {
-    const p = await pay(subId, withGst(6999, 18));
+    const p = await pay(subId, withGst(5999, 18));
     const r = await owner.post('/api/billing/verify', p);
     assert.equal(r.status, 200);
     assert.equal(r.body.invoiceNumber, `SFS/${fy}/0001`);
@@ -178,9 +178,9 @@ describe('billing (Razorpay + GST invoices)', () => {
     assert.equal(o.billing_cycle, 'monthly');
     assert.ok(o.current_period_end);
     const [inv] = await invoices();
-    assert.equal(inv.total_paise, 825882);
-    assert.equal(inv.taxable_paise, 699900);
-    assert.equal(inv.cgst_paise + inv.sgst_paise, 125982);
+    assert.equal(inv.total_paise, 707882);
+    assert.equal(inv.taxable_paise, 599900);
+    assert.equal(inv.cgst_paise + inv.sgst_paise, 107982);
     assert.equal(inv.igst_paise, 0, 'same state as the seller');
     assert.equal(inv.buyer.gstin, BUYER_GSTIN);
     const mail = await ctx.db.one(`SELECT * FROM notifications WHERE kind = 'invoice' ORDER BY created_at DESC LIMIT 1`);
@@ -191,7 +191,7 @@ describe('billing (Razorpay + GST invoices)', () => {
     const [inv] = await invoices();
     const doc = await owner.get(`/api/billing/invoices/${inv.id}/document`);
     assert.equal(doc.status, 200);
-    for (const text of ['Tax Invoice', `SFS/${fy}/0001`, SELLER_GSTIN, BUYER_GSTIN, 'CGST @ 9%', 'SGST @ 9%', 'Rupees Eight Thousand Two Hundred Fifty Eight and Eighty Two Paise Only', '997331'])
+    for (const text of ['Tax Invoice', `SFS/${fy}/0001`, SELLER_GSTIN, BUYER_GSTIN, 'CGST @ 9%', 'SGST @ 9%', 'Rupees Seven Thousand Seventy Eight and Eighty Two Paise Only', '997331'])
       assert.ok(doc.body.includes(text), `invoice shows ${text}`);
     const admin = await as('admin@test.local');
     assert.equal((await admin.get(`/api/billing/invoices/${inv.id}/document`)).status, 200);
@@ -222,7 +222,7 @@ describe('billing (Razorpay + GST invoices)', () => {
   it('invoices renewals from the webhook, with no duplicates', async () => {
     // Downgrade takes effect at renewal: Razorpay now reports the starter plan.
     fake.subs[subId].plan_id = 'plan_starter_m';
-    const amount = withGst(3499, 18);
+    const amount = withGst(2999, 18);
     const evt = {
       event: 'subscription.charged',
       payload: { subscription: { entity: { ...fake.subs[subId], status: 'active', current_start: now(), current_end: now() + 30 * 86400 } }, payment: { entity: { id: 'pay_renewal_1', amount } } },
@@ -247,12 +247,12 @@ describe('billing (Razorpay + GST invoices)', () => {
 
   it('charges IGST when the buyer is in another state', async () => {
     await owner.put('/api/billing/profile', { legalName: 'Arjun Creative LLP', address: 'Indiranagar', city: 'Bengaluru', stateCode: '29', pincode: '560038', email: 'accounts@test.local' });
-    const evt = { event: 'subscription.charged', payload: { subscription: { entity: { ...fake.subs[subId], status: 'active' } }, payment: { entity: { id: 'pay_renewal_2', amount: withGst(3499, 18) } } } };
+    const evt = { event: 'subscription.charged', payload: { subscription: { entity: { ...fake.subs[subId], status: 'active' } }, payment: { entity: { id: 'pay_renewal_2', amount: withGst(2999, 18) } } } };
     const { raw, sig } = signWebhook(evt);
     await fetch(`${ctx.url}/api/billing/webhook`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-razorpay-signature': sig }, body: raw });
     const inv = (await invoices()).at(-1);
     assert.equal(inv.place_of_supply, '29');
-    assert.equal(inv.igst_paise, 62982);
+    assert.equal(inv.igst_paise, 53982);
     assert.equal(inv.cgst_paise, 0);
     const doc = await owner.get(`/api/billing/invoices/${inv.id}/document`);
     assert.ok(doc.body.includes('IGST @ 18%'));

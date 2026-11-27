@@ -5,10 +5,11 @@ export async function seedPlansAndTemplates() {
   // id, name, monthly, yearly, storage GB, studios, face events/month, staff, RAW, premium templates, client galleries
   const plans = [
     // Face search is not offered for now (0 face events in every plan).
-    ['website', 'Website', 999, 9990, 10, 1, 0, 1, false, false, false],
-    ['starter', 'Starter', 3499, 34990, 500, 1, 0, 1, false, false, true],
-    ['pro', 'Pro', 6999, 69990, 1536, 1, 0, 3, true, true, true],
-    ['organization', 'Organization', 14999, 149990, 4096, 3, 0, 10, true, true, true],
+    // Prices and limits from the 27 Nov 2026 pricing review (migration 012).
+    ['website', 'Website', 999, 9990, 25, 1, 0, 1, false, false, false],
+    ['starter', 'Starter', 2999, 29990, 1024, 1, 0, 2, false, false, true],
+    ['pro', 'Pro', 5999, 59990, 2048, 1, 0, 5, true, true, true],
+    ['organization', 'Organization', 13999, 139990, 5120, 3, 0, 15, true, true, true],
   ];
   for (const p of plans) {
     // New plans are created with these values; existing plans keep what the Super Admin set.

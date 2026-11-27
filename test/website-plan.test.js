@@ -15,12 +15,12 @@ before(async () => {
 after(stop);
 
 describe('Website plan (website only, no client galleries)', () => {
-  it('exists at ₹999 / ₹9,990 with 10 GB and no client galleries', async () => {
+  it('exists at ₹999 / ₹9,990 with 25 GB and no client galleries', async () => {
     const admin = await as('admin@test.local');
     const plan = (await admin.get('/api/admin/plans')).body.find((p) => p.id === 'website');
     assert.equal(plan.price_monthly_inr, 999);
     assert.equal(plan.price_yearly_inr, 9990);
-    assert.equal(plan.storage_gb, 10);
+    assert.equal(plan.storage_gb, 25);
     assert.equal(plan.client_galleries, false);
     assert.equal(plan.face_events_per_month, 0);
     assert.equal(plan.raw_delivery, false);
